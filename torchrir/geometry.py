@@ -1,12 +1,12 @@
-import math
-from typing import Any, Iterable
+from typing import Any, Iterable, Tuple
 
 import torch
-from torch import Tensor
+from torch import BoolTensor, Tensor
 from torch.linalg import matrix_rank
 
 
-class Patch(tuple):
+class Patch:
+    _tensor: Tensor = None
     _origin: Tensor = None
     _rel_vertices: Tensor = None
     _is_planar: bool = None
@@ -14,36 +14,36 @@ class Patch(tuple):
     _matrix_plane: Tensor = None
     _normal_plane: Tensor = None
 
-    def __new__(cls, vertices: Iterable[Tensor]) -> "Self":
-        return super(Patch, cls).__new__(
-            cls, tuple(obj.detach().squeeze() for obj in vertices)
-        )
-
-    def __init__(self, vertices: Iterable[Tensor]):
-
-        for obj in self:
-            if obj.shape != (3,):
-                raise ValueError(f"Expected tensor of shape (3,), got {obj.shape}")
+    def __init__(self, vertices: Tensor):
+        for obj in vertices:
+            if obj.shape[-1] != 3:
+                raise ValueError(
+                    f"Expected tensors of shape (..., 3,), got {obj.shape}"
+                )
+        self._t = vertices.unsqueeze(0) if vertices.ndim == 2 else vertices
 
         # Set inner properties
-        cat_vertices = torch.cat(self).view(3, -1)
-        self._origin = cat_vertices[0]
-        self._rel_vertices = cat_vertices - self._origin
-        self._is_planar = matrix_rank(self._rel_vertices).item() == 2
+        self._origin = torch.tensor(self._t[:, :1])
+        self._rel_vertices = torch.tensor(self._t) - self._origin
 
-        if self.is_planar:
-            self._matrix_plane = cat_vertices[1:3] - self._origin
-            self._normal_plane = torch.cross(*self._matrix_plane)
-            self._normal_plane /= self._normal_plane.norm()
+        self._is_planar = matrix_rank(self._rel_vertices) == 2
+
+        def _if_planar(x: Tensor, other=torch.nan) -> Tensor:
+            return torch.where(
+                self.is_planar.view(-1, *((1,) * (x.ndim - 1))), x, other
+            )
+
+        self._matrix_plane = _if_planar((torch.tensor(self._t[:, 1:3]) - self._origin))
+        self._normal_plane = _if_planar(torch.cross(*self._matrix_plane.moveaxis(1, 0))).unsqueeze(1)
+        self._normal_plane /= self._normal_plane.norm(dim=-1).unsqueeze(-1)
 
         # Try to define if is convex
-        if not self.is_planar:
-            self._is_convex = False
-        if self.is_planar and len(self) <= 4:
-            self._is_convex = True
+        self._is_convex = _if_planar(torch.tensor(torch.nan), False)
+        if self._t.shape[1] <= 3:
+            self._is_convex[:] = True
 
     @property
-    def is_planar(self):
+    def is_planar(self) -> BoolTensor:
         return self._is_planar
 
     @property
@@ -60,59 +60,98 @@ class Patch(tuple):
 
     @property
     def normal_plane(self):
-        if self.is_planar:
+        if self.is_planar.all():
             return self._normal_plane
         raise ValueError("Non-planar patch has no normal")
 
-    def __contains__(self, p: Tensor) -> bool:
-        if self.is_convex:
-            return self._convex_contains(p)
+    def __contains__(self, arg: Any) -> BoolTensor:
+        if self.is_convex.all():
+            return self._convex_contains(*arg)
         raise NotImplementedError()
 
-    def _convex_contains(self, p: Tensor, epsilon: float = 1e-4) -> bool:
+    def _convex_contains(
+        self, p: Tensor, mask: BoolTensor = None, atol: float = 1e-4
+    ) -> BoolTensor:
+        """Tests if a point p is inside a convex polygon (self) in 3D by computing the winding number.
+
+        See https://en.wikipedia.org/wiki/Point_in_polygon
+
+        Args:
+            p: point p to be tested
+            mask: boolean mask flagging batch elements to be tested
+            atol: see torch.isclose. Defaults to 1e-4.
+
+        Returns:
+            bool: true iff p in self
+        """
+        rel_vertices = self._rel_vertices
+        origin = self._origin
+        if mask is not None:
+            if not mask.any():
+                return False
+            p = p[mask]
+            rel_vertices = rel_vertices[mask]
+            origin = origin[mask]
+
         def _circle_pairwise(x: Tensor):
-            return zip(x, [*x[1:], x[0]])
+            x = x.moveaxis(1, 0)
+            return zip(x, (*x[1:], x[0]))
 
         # Inside outside problem, solution 4: https://www.eecs.umich.edu/courses/eecs380/HANDOUTS/PROJ2/InsidePoly.html
-        angle = 0
+        angle = torch.zeros(1)
 
-        for v0, v1 in _circle_pairwise(self._rel_vertices - p + self._origin):
-            m0, m1 = v0.norm(), v1.norm()
-            if (den := m0 * m1) <= epsilon:  # numerically at a vertex
-                return True
-            angle += torch.acos(torch.dot(v0, v1) / den)
-        return abs(angle - 2 * math.pi) <= epsilon
+        for v0, v1 in _circle_pairwise(rel_vertices - p + origin):
+            m0, m1 = v0.norm(dim=1), v1.norm(dim=1)  # p is numerically at a vertex
+            at_vertex = torch.isclose(
+                den := m0 * m1, torch.zeros(1), atol=atol
+            )
+            angle = angle + torch.acos((v1 * v0).sum(dim=1) / den)
+            angle[at_vertex] = 2 * torch.pi
+        return angle >= (2 * torch.pi - atol)
 
 
 class Ray:
-    origin: Tensor
-    direction: Tensor
 
     def __init__(self, direction: Tensor, origin: Tensor = None) -> None:
+        if direction.ndim == 2:
+            direction = direction.unsqueeze(1)
         if origin is None:
-            origin = torch.zeros(3)
-        if norm_direction := direction.norm() == 0:
+            origin = torch.zeros_like(direction)
+        elif origin.ndim == 2:
+            origin = origin.unsqueeze(1)
+        if (norm_direction := direction.norm()) == 0:
             raise ValueError("Null direction: Degenerated ray instantiated")
         self.origin = origin
         self.direction = direction / norm_direction
 
     def intersects(self, patch: Patch) -> bool:
-        if patch.is_planar:
+        if torch.all(patch.is_planar):
             return self._intersects_planar_patch(patch)
         raise NotImplementedError("Ray.intersects only suports planar patches")
 
     def _intersects_planar_patch(
         self, patch: Patch, two_sided_ray: bool = False
     ) -> bool:
+        def _broadcast_dot(x: Tensor, y: Tensor) -> Tensor:
+            return (x * y).sum(dim=-1)
+
         # Ray plane intersection: https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-plane-and-ray-disk-intersection.html
         # Computes t such that the ray intersects the plane generated by the patch at p = origin + t * direction
-        t = -torch.dot(self.origin - patch.origin, patch.normal_plane) / torch.dot(
-            self.direction, patch.normal_plane
-        )
-        if not two_sided_ray and t < 0:
-            return False
+        t = -_broadcast_dot(
+            self.origin - patch.origin, patch.normal_plane
+        ) / _broadcast_dot(self.direction, patch.normal_plane)
 
-        p = self.origin + t * self.direction
+        if not two_sided_ray:  # t < 0  and one sided ray => missed it
+            sure_missed = (t < 0)[..., 0]
+        else:
+            sure_missed = torch.full(t.shape[:1], False, dtype=torch.bool)
 
-        # Check if point inside poly
-        return p in patch
+        tbd = ~sure_missed
+        p = torch.zeros(t.shape + (3,))
+
+        p[tbd, :] = (self.origin + t.unsqueeze(-1) * self.direction)[
+            tbd
+        ]  # intersection point p
+        #   Check if point inside poly patch
+        tbd[tbd.clone()] *= patch.__contains__((p, tbd))
+        return tbd

@@ -82,19 +82,30 @@ def test_mirror_point_on_patch():
 
 def test_mirror_point_on_patch_broadcasting():
     n_batches = 1000
-    patch = Patch(torch.randn(n_batches, 3, 3))
     p = torch.randn(n_batches, 3)
+    patch = Patch(torch.randn(n_batches, 3, 3))
     p_rr = patch.mirror(patch.mirror(p))
     assert torch.allclose(p, p_rr.squeeze(), atol=1e-6)
 
     n_batches = 1000
-    patch = Patch(torch.randn(n_batches, 3, 3))
     p = torch.randn(3)
+    patch = Patch(torch.randn(n_batches, 3, 3))
     p_rr = patch.mirror(patch.mirror(p))
     assert torch.allclose(p, p_rr.squeeze(), atol=1e-5)
 
     n_batches = 1000
-    patch = Patch(torch.randn(3, 3))
     p = torch.randn(n_batches, 3)
+    patch = Patch(torch.randn(3, 3))
     p_rr = patch.mirror(patch.mirror(p))
     assert torch.allclose(p, p_rr.squeeze(), atol=1e-6)
+
+    n_batches_a = 100
+    n_batches_b = 200
+    p = torch.randn(n_batches_a, 3)
+    patch = Patch(torch.randn(n_batches_b, 3, 3))
+    p_r = patch.mirror(p)
+    assert p_r.shape == (n_batches_a,  n_batches_b, 1, 3)
+    
+
+def test_room_mirrors():
+    pass

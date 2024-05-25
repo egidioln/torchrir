@@ -1,8 +1,15 @@
-from typing import Any, Iterable, Tuple
+from collections import deque
+from itertools import product
+from typing import Any, Iterable, List, Tuple
 
+from numpy.typing import NDArray
+import scipy
+import scipy.ndimage
 import torch
 from torch import BoolTensor, Tensor
 from torch.linalg import matrix_rank
+
+from torchrir.source import Source
 
 
 class Patch:
@@ -20,7 +27,9 @@ class Patch:
                 raise ValueError(
                     f"Expected tensors of shape (..., 3,), got {obj.shape}"
                 )
-        self._t = vertices.unsqueeze(0) if vertices.ndim == 2 else vertices
+        self._t = (
+            torch.tensor(vertices).unsqueeze(0) if vertices.ndim == 2 else vertices
+        )
 
         # Set inner properties
         self._origin = torch.tensor(self._t[:, :1])
@@ -34,7 +43,9 @@ class Patch:
             )
 
         self._matrix_plane = _if_planar((torch.tensor(self._t[:, 1:3]) - self._origin))
-        self._normal_plane = _if_planar(torch.cross(*self._matrix_plane.moveaxis(1, 0))).unsqueeze(1)
+        self._normal_plane = _if_planar(
+            torch.cross(*self._matrix_plane.moveaxis(1, 0))
+        ).unsqueeze(1)
         self._normal_plane /= self._normal_plane.norm(dim=-1).unsqueeze(-1)
 
         # Try to define if is convex
@@ -110,14 +121,22 @@ class Patch:
             angle[at_vertex] = 2 * torch.pi
         return angle >= (2 * torch.pi - atol)
 
-    def mirror(self, p: Tensor):
+    def mirror(self, s: Source, force_product: bool = False) -> Source:
         """Mirror a point p through the plane of self"""
+        p = s.p
         if p.ndim == 1:
             p = p.unsqueeze(0)
         if p.ndim == 2:
             p = p.unsqueeze(1)
+        if p.shape[-3] != 1 and (p.shape[-3] != self._origin.shape[-3] or force_product):
+            p = p.unsqueeze(-3)
         p = p - self._origin
-        return self._origin + p - 2 * _broadcast_dot(p, self.normal_plane).unsqueeze(-1) * self.normal_plane
+        return Source(
+            self._origin
+            + p
+            - 2 * _broadcast_dot(p, self.normal_plane).unsqueeze(-1) * self.normal_plane
+        )
+
 
 class Ray:
     def __init__(self, direction: Tensor, origin: Tensor = None) -> None:
@@ -136,7 +155,7 @@ class Ray:
     def intersects(self, patch: Patch) -> Tuple[BoolTensor, Tensor]:
         if torch.all(patch.is_planar):
             return self._intersects_planar_patch(patch)
-        raise NotImplementedError("Ray.intersects only suports planar patches")
+        raise NotImplementedError("Ray.intersects() only supports planar patches")
 
     def _intersects_planar_patch(
         self, patch: Patch, two_sided_ray: bool = False
@@ -158,10 +177,77 @@ class Ray:
         p[tbd, :] = (self.origin + t.unsqueeze(-1) * self.direction)[
             tbd
         ]  # intersection points p
-        #   Check if point inside poly patch
+        #  Check if point inside poly patch
         tbd[tbd.clone()] *= patch.contains((p, tbd))
         return tbd, p
 
-def _broadcast_dot(x: Tensor, y: Tensor) -> Tensor:
-            return (x * y).sum(dim=-1)
 
+def _broadcast_dot(x: Tensor, y: Tensor) -> Tensor:
+    return (x * y).sum(dim=-1)
+
+
+class Room:
+    _walls: Patch | List[Patch]
+
+    @property
+    def walls(self) -> Patch | List[Patch]:
+        return self._walls
+
+
+class ConvexRoom(Room):
+    _points: Iterable[Tensor] = None
+    _convex_hull: scipy.spatial.ConvexHull = None
+
+    def __init__(self, points: Iterable[Tensor | NDArray]):
+        """Constructor of the class  `ConvexRoom`
+
+        Args:
+            points (Iterable[Tensor  |  NDArray]): the vertices of the room
+        """
+        device = None
+        if isinstance(next(iter(points)), Tensor):
+            points = points.detach()
+            device = points.device
+        self._convex_hull = scipy.spatial.ConvexHull(points.detach().cpu())
+        self._points = torch.tensor(self._convex_hull.points, device=device)
+        self._facets = self._points[self._convex_hull.simplices]
+        self._walls = Patch(self._facets)
+
+    @property
+    def points(self) -> Tensor:
+        """Returns the vertices of the room"""
+        return self._points
+
+    @property
+    def facets(self) -> Tensor:
+        """Returns the facets of the room"""
+        return self._facets
+
+    def compute_k_reflected_sources(
+        self,
+        sources: Iterable[Source],
+        k: int,
+        force_product: bool = False,
+    ) -> List[Iterable[Source]]:
+        if not isinstance(sources, Source):
+            return [
+                self.compute_k_reflected_sources(s, k, force_product=force_product)
+                for s in sources
+            ]
+        sources = [sources]
+        tuple(
+            sources.append(
+                self.compute_reflected_sources(sources[-1], force_product=force_product)
+            )
+            for _ in range(k)
+        )
+        return sources
+
+    def compute_reflected_sources(
+        self,
+        s_list: Source | Iterable[Source],
+        force_product: bool = False,
+    ) -> Iterable[Source]:
+        if not isinstance(s_list, Source):
+            return [self.walls.mirror(s, force_product=force_product) for s in s_list]
+        return self.walls.mirror(s_list, force_product=force_product)

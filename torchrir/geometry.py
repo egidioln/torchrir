@@ -90,20 +90,20 @@ class Patch:
             if not mask.any():
                 return False
             p = p[mask]
-            rel_vertices = rel_vertices[mask]
-            origin = origin[mask]
+            rel_vertices = rel_vertices[... if rel_vertices.shape[0] == 1 else mask]
+            origin = origin[... if rel_vertices.shape[0] == 1 else mask]
 
         def _circle_pairwise(x: Tensor):
             x = x.moveaxis(1, 0)
             return zip(x, (*x[1:], x[0]))
 
         # Inside outside problem, solution 4: https://www.eecs.umich.edu/courses/eecs380/HANDOUTS/PROJ2/InsidePoly.html
-        angle = torch.zeros(1)
+        angle = torch.zeros(1, device=p.device)
 
         for v0, v1 in _circle_pairwise(rel_vertices - p + origin):
             m0, m1 = v0.norm(dim=1), v1.norm(dim=1)  # p is numerically at a vertex
             at_vertex = torch.isclose(
-                den := m0 * m1, torch.zeros(1), atol=atol
+                den := m0 * m1, torch.zeros(1, device=den.device), atol=atol
             )
             angle = angle + torch.acos((v1 * v0).sum(dim=1) / den)
             angle[at_vertex] = 2 * torch.pi
@@ -147,7 +147,7 @@ class Ray:
             sure_missed = torch.full(t.shape[:1], False, dtype=torch.bool)
 
         tbd = ~sure_missed
-        p = torch.zeros(t.shape + (3,))
+        p = torch.zeros(t.shape + (3,), device=t.device)
 
         p[tbd, :] = (self.origin + t.unsqueeze(-1) * self.direction)[
             tbd

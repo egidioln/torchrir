@@ -1,4 +1,6 @@
-from torchrir.geometry import Patch, Ray
+from itertools import product
+from typing import Iterable
+from torchrir.geometry import ConvexRoom, Patch, Ray
 import torch
 import pytest
 
@@ -115,4 +117,45 @@ def test_mirror_point_on_patch_broadcasting():
 
 
 def test_room_mirrors():
-    pass
+    room_geometry = torch.tensor([5, 4.3, 2.4])
+    points: Iterable[torch.Tensor] = (
+        room_geometry * torch.tensor(list(product((-1, 1), repeat=3))) / 2
+    )
+    room: ConvexRoom = ConvexRoom(points, reflection_coeff=0.3)
+    n_vertices = len(room.points)
+    _ = torch.rand(n_vertices)
+    sources = Source(torch.zeros(3), intensity=torch.ones(1) * 5)
+
+    reflected_sources = room.compute_reflected_sources(
+        sources, force_batch_product=True
+    )
+    dtype = reflected_sources.intensity.dtype
+    assert torch.allclose(reflected_sources.intensity, torch.ones(12, dtype=dtype) * 0.3 * 5)
+
+
+    reflected_sources = room.compute_reflected_sources(
+        reflected_sources, force_batch_product=True
+    )
+    assert torch.allclose(reflected_sources.intensity, torch.ones(120 , dtype=dtype) * 0.3 * 0.3 * 5)
+
+    reflected_sources = room.compute_reflected_sources(
+        reflected_sources, force_batch_product=True
+    )
+    assert torch.allclose(reflected_sources.intensity, torch.ones(1008 , dtype=dtype) * 0.3 * 0.3  * 0.3 * 5)
+
+
+def test_convexroom_rir():
+    room_geometry = torch.tensor([5, 4.3, 2.4])
+    points: Iterable[torch.Tensor] = (
+        room_geometry * torch.tensor(list(product((-1, 1), repeat=3))) / 2
+    )
+    room: ConvexRoom = ConvexRoom(points, reflection_coeff=0.1)
+    source = Source(torch.zeros(3), intensity=torch.ones(1) * 5)
+
+    p = torch.tensor([2, 2, .8])
+
+    rir, t = room.compute_rir(p, source, k=7)
+
+    1
+    import matplotlib.pyplot as plt
+    plt.plot(t, rir )

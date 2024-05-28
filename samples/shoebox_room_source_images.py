@@ -8,10 +8,10 @@ from torchrir.source import Source
 
 torch.set_default_device("cuda")
 torch.torch.set_default_dtype(torch.float)
-REF_DEGREE: int = 9
+REF_DEGREE: int = 5
 N_REP_BENCHMARK: int = 10
 ROOM_GEOMETRY: Tuple[int, int, int] = (4, 3, 2)
-WILL_PLOT_ROOM: bool = False
+WILL_PLOT_ROOM: bool = True
 
 def shoebox_room_source_images():
     points: Iterable[torch.Tensor] = (
@@ -24,12 +24,12 @@ def shoebox_room_source_images():
     sources = Source(torch.sum(room.points.T * cvx_combination, dim=1))
 
     all_sources = room.compute_k_reflected_sources(
-        sources, REF_DEGREE, force_product=True
+        sources, REF_DEGREE, force_batch_product=True
     )
     print(
         timeit.timeit(
             lambda: room.compute_k_reflected_sources(
-                sources, REF_DEGREE, force_product=True
+                sources, REF_DEGREE, force_batch_product=True
             ),
             number=N_REP_BENCHMARK,
         )

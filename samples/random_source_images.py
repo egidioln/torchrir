@@ -21,12 +21,12 @@ def random_source_images():
     sources = Source(torch.sum(room.points.T * cvx_combination, dim=1))
 
     all_sources = room.compute_k_reflected_sources(
-        sources, REF_DEGREE, force_product=True
+        sources, REF_DEGREE, force_batch_product=True
     )
     print(
         timeit.timeit(
             lambda: room.compute_k_reflected_sources(
-                sources, REF_DEGREE, force_product=True
+                sources, REF_DEGREE, force_batch_product=True
             ),
             number=N_REP_BENCHMARK,
         )

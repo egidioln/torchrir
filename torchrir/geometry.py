@@ -12,7 +12,8 @@ from torchrir.source import Source
 
 
 class Patch:
-    _tensor: Tensor = None
+    _t: Tensor = None
+    _reflection_coeff: Tensor = None
     _origin: Tensor = None
     _rel_vertices: Tensor = None
     _is_planar: bool = None
@@ -20,7 +21,7 @@ class Patch:
     _matrix_plane: Tensor = None
     _normal_plane: Tensor = None
 
-    def __init__(self, vertices: Tensor):
+    def __init__(self, vertices: Tensor, reflection_coeff: Tensor | float = None):
         for obj in vertices:
             if obj.shape[-1] != 3:
                 raise ValueError(
@@ -30,7 +31,13 @@ class Patch:
             torch.tensor(vertices).unsqueeze(0) if vertices.ndim == 2 else vertices
         )
 
-        # Set inner properties
+        self._reflection_coeff = reflection_coeff
+        if self._reflection_coeff is None:
+            self._reflection_coeff = torch.ones_like(vertices[..., 0, 0]) * 0.5
+        if isinstance(self._reflection_coeff, float):
+            self._reflection_coeff = torch.ones_like(vertices[..., 0, 0]) * self._reflection_coeff
+
+        # Set inner propertiesPatch
         self._origin = torch.tensor(self._t[:, :1])
         self._rel_vertices = torch.tensor(self._t) - self._origin
 
@@ -136,6 +143,7 @@ class Patch:
             Source: Mirrors of source
         """
         p = s.p
+        intensity = s.intensity
         if p.ndim == 1:
             p = p.unsqueeze(0)
         if p.ndim == 2:
@@ -144,10 +152,12 @@ class Patch:
             p.shape[-3] != self._origin.shape[-3] or force_product
         ):  # forces cartesian product of sources and patches by expanding a dimension, if needed
             p = p.unsqueeze(-3)
+            intensity = intensity.unsqueeze(-1)
         p = p - self._origin
         inner_product_p_normal = _dot(p, self.normal_plane, keepdim=True)
-        
+
         valid = (inner_product_p_normal >= 0)[..., 0] if if_inside else ...
+        # I tried using masked tensors here but it didn't help
         # p = torch.masked.masked_tensor(p, valid.expand_as(p))
         # inner_product_p_normal = torch.masked.masked_tensor(inner_product_p_normal, valid.expand_as(inner_product_p_normal))
 
@@ -156,9 +166,10 @@ class Patch:
             + p
             - 2 * inner_product_p_normal * self.normal_plane
         )[valid]
+        new_intensities = (intensity * self._reflection_coeff)[valid[..., 0]]
         # if torch.masked.is_masked_tensor(new_positions):
         #     new_positions = new_positions.get_data()[new_positions.get_mask()[..., 0]]
-        return Source(new_positions)
+        return Source(new_positions, new_intensities)
 
     def turn_normal_towards(self, point: Tensor):
         """If necessary, flips the normal of the plane towards a point."""
@@ -252,7 +263,7 @@ class ConvexRoom(Room):
     _points: Iterable[Tensor] = None
     _convex_hull: scipy.spatial.ConvexHull = None
 
-    def __init__(self, points: Iterable[Tensor | NDArray]):
+    def __init__(self, points: Iterable[Tensor | NDArray], reflection_coeff: Tensor ):
         """Constructor of the class `ConvexRoom`
 
         Args:
@@ -265,7 +276,7 @@ class ConvexRoom(Room):
         self._convex_hull = scipy.spatial.ConvexHull(points.detach().cpu())
         self._points = torch.tensor(self._convex_hull.points, device=device)
         self._facets = self._points[self._convex_hull.simplices]
-        self._walls = Patch(self._facets)
+        self._walls = Patch(self._facets, reflection_coeff=reflection_coeff)
         self._force_walls_normal_to_point_inwards()
 
     @property
@@ -294,17 +305,17 @@ class ConvexRoom(Room):
         self,
         sources: Iterable[Source],
         k: int,
-        force_product: bool = False,
+        force_batch_product: bool = False,
     ) -> List[Iterable[Source]]:
         if not isinstance(sources, Source):
             return [
-                self.compute_k_reflected_sources(s, k, force_product=force_product)
+                self.compute_k_reflected_sources(s, k, force_batch_product=force_batch_product)
                 for s in sources
             ]
         sources = [sources]
         tuple(
             sources.append(
-                self.compute_reflected_sources(sources[-1], force_product=force_product)
+                self.compute_reflected_sources(sources[-1], force_batch_product=force_batch_product)
             )
             for _ in range(k)
         )
@@ -313,11 +324,30 @@ class ConvexRoom(Room):
     def compute_reflected_sources(
         self,
         s_list: Source | Iterable[Source],
-        force_product: bool = False,
+        force_batch_product: bool = False,
     ) -> Iterable[Source]:
         if not isinstance(s_list, Source):
             return [
-                self.walls.mirror(s, force_product=force_product, if_inside=True)
+                self.walls.mirror(s, force_product=force_batch_product, if_inside=True)
                 for s in s_list
             ]
-        return self.walls.mirror(s_list, force_product=force_product, if_inside=True)
+        return self.walls.mirror(s_list, force_product=force_batch_product, if_inside=True)
+
+
+    def compute_rir(self, p: Tensor, s: Source, k: int, t_final: float = 2.0, fs: float = 10000.0) -> Tensor:
+        h = torch.zeros(int(t_final * fs)).cpu()
+        dt = 1 / fs
+
+        def _delay(_s: Source, speed_of_sound: float = 343.0) -> torch.IntTensor:
+            return (_s.distance_to(p) / speed_of_sound / dt).long()
+
+        h[_delay(s)] = s.intensity / dt
+        for _ in range(k):
+            print(f"Reflection {_}, reflecting...")
+            s = self.compute_reflected_sources(s,force_batch_product=True)
+            print(f"Reflection {_}, updating impulse response...")
+            for idx, h_inc in zip(_delay(s).cpu(), s.intensity.cpu() / dt):
+                h[idx] += h_inc
+
+        return h, torch.arange(len(h), device='cpu')*dt
+

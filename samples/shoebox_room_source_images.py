@@ -1,5 +1,6 @@
 import timeit
-from typing import Iterable
+from typing import Iterable, Tuple
+from itertools import product
 import torch
 
 from torchrir.geometry import ConvexRoom
@@ -7,13 +8,15 @@ from torchrir.source import Source
 
 torch.set_default_device("cuda")
 torch.torch.set_default_dtype(torch.float)
-REF_DEGREE: int = 6
-ROOM_VERTEX: int = 4
+REF_DEGREE: int = 9
 N_REP_BENCHMARK: int = 10
+ROOM_GEOMETRY: Tuple[int, int, int] = (4, 3, 2)
+WILL_PLOT_ROOM: bool = False
 
-
-def random_source_images():
-    points: Iterable[torch.Tensor] = (torch.rand(ROOM_VERTEX, 3) - 0.5) * 2
+def shoebox_room_source_images():
+    points: Iterable[torch.Tensor] = (
+        torch.tensor(ROOM_GEOMETRY) * torch.tensor(list(product((-1, 1), repeat=3))) / 2
+    )
     room: ConvexRoom = ConvexRoom(points)
     n_vertices = len(room.points)
     _ = torch.rand(n_vertices)
@@ -33,6 +36,8 @@ def random_source_images():
         / N_REP_BENCHMARK
     )
 
+    if not WILL_PLOT_ROOM:
+        return
     import matplotlib.pyplot as plt
     room_fig, ax = room.plot(color="blue", alpha=0.2, edgecolor="black")
 
@@ -42,4 +47,4 @@ def random_source_images():
 
 
 if __name__ == "__main__":
-    random_source_images()
+    shoebox_room_source_images()

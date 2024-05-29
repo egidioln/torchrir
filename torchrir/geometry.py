@@ -393,13 +393,13 @@ class ConvexRoom(Room):
         impulse_response = (
             impulse_response
             if impulse_response is not None
-            else ImpulseResponseMethodStrategies.histogram
+            else ImpulseResponseStrategies.histogram
         )
         n_samples = int(t_final * fs)
         dt = 1 / fs
-        # h = torch.zeros(n_samples)
 
         h = impulse_response(p, s, dt, n_samples)
+
         # For efficiency, compute_reflected_sources is a generator
         s_list = deque([s])
         for _ in range(k):
@@ -418,7 +418,7 @@ class ConvexRoom(Room):
         return h.cpu(), torch.arange(len(h), device="cpu") * dt
 
 
-class ImpulseResponseMethodStrategies:
+class ImpulseResponseStrategies:
     @staticmethod
     def histogram(p: Tensor, s: Source, dt: float, n_samples: int) -> Tensor:
         return torchist.histogram(
@@ -426,15 +426,31 @@ class ImpulseResponseMethodStrategies:
             bins=n_samples,
             low=0,
             upp=n_samples,
-            weights=s.intensity / dt,
+            weights=s.intensity / (4 * dt * torch.pi * s.distance_to(p)),
         )
 
     @staticmethod
     def sinc(p: Tensor, s: Source, dt: float, n_samples: int) -> Tensor:
-        torchist.histogram(
-            s.delay(p) / dt,
-            bins=n_samples,
-            low=0,
-            upp=n_samples,
-            weights=s.intensity / dt,
-        )
+        """Method described in https://arxiv.org/pdf/1710.04196
+        
+        Args:
+            p (Tensor): _description_
+            s (Source): _description_
+            dt (float): _description_
+            n_samples (int): _description_
+
+        Returns:
+            Tensor: _description_
+        """
+        
+        return 
+        
+
+    @staticmethod
+    def delta_lp(x, tw: float = 0.01):
+        mask = -tw / 2 < x < tw / 2
+        out = torch.zeros_like(x)
+        t = x[mask]
+        if mask.any():
+            out[mask] = 0.5 * (1 + torch.cos(2*torch.pi / tw * t)) * torch.sinc(t)
+        return out

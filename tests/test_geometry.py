@@ -168,8 +168,8 @@ def test_convexroom_rir():
     t0 = time.perf_counter_ns()
     rir, t = room.compute_rir(p, source, k=7)
     dt = time.perf_counter_ns() - t0
-    warn(dt / 1e9)
-    assert torch.isclose(rir.sum(), torch.tensor(308860.0312))
+    # warn(dt / 1e9)
+    assert torch.isclose(rir.sum(), torch.tensor(4382.2798))
 
     # import matplotlib.pyplot as plt
     # plt.plot(t, rir )

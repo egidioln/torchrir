@@ -2,7 +2,7 @@ from itertools import product
 import time
 from typing import Iterable
 from warnings import warn
-from torchrir.geometry import ConvexRoom, Patch, Ray
+from torchrir.geometry import ConvexRoom, ImpulseResponseStrategies, Patch, Ray
 import torch
 import pytest
 
@@ -153,7 +153,7 @@ def test_room_mirrors():
     )
 
 
-def test_convexroom_rir():
+def test_convexroom_rir_hist():
     room_geometry = torch.tensor([5, 4.3, 2.4], dtype=torch.float32)
     points: Iterable[torch.Tensor] = (
         room_geometry * torch.tensor(list(product((-1, 1), repeat=3))) / 2
@@ -166,10 +166,30 @@ def test_convexroom_rir():
     p = torch.tensor([2, 2, 0.8], dtype=room_geometry.dtype)
 
     t0 = time.perf_counter_ns()
-    rir, t = room.compute_rir(p, source, k=7)
+    rir, t = room.compute_rir(p, source, k=7, impulse_response=ImpulseResponseStrategies.histogram)
     dt = time.perf_counter_ns() - t0
     # warn(dt / 1e9)
-    assert torch.isclose(rir.sum(), torch.tensor(4382.2798))
+    assert torch.isclose(rir.sum(), torch.tensor(0.43822792172431946))
+
+
+
+def test_convexroom_rir_sinc():
+    room_geometry = torch.tensor([5, 4.3, 2.4], dtype=torch.float32)
+    points: Iterable[torch.Tensor] = (
+        room_geometry * torch.tensor(list(product((-1, 1), repeat=3))) / 2
+    )
+    room: ConvexRoom = ConvexRoom(points, reflection_coeff=0.1)
+    source = Source(
+        torch.zeros(3), intensity=torch.ones(1, dtype=room_geometry.dtype) * 5
+    )
+
+    p = torch.tensor([2, 2, 0.8], dtype=room_geometry.dtype)
+
+    t0 = time.perf_counter_ns()
+    rir, t = room.compute_rir(p, source, k=7, impulse_response=ImpulseResponseStrategies.sinc)
+    dt = time.perf_counter_ns() - t0
+    warn(dt / 1e9)
+    assert torch.isclose(rir.sum(), torch.tensor(1.185165524482727))
 
     # import matplotlib.pyplot as plt
     # plt.plot(t, rir )

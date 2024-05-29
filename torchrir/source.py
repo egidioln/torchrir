@@ -17,11 +17,9 @@ class Source:
     def p(self) -> torch.Tensor:
         return self.position
 
-    @lru_cache
     def delay(self, p: torch.Tensor, speed_of_sound: float = 343.0) -> torch.Tensor:
-        return (self.distance_to(p) / speed_of_sound)
+        return self.distance_to(p) / speed_of_sound
 
-    @lru_cache
     def distance_to(self, p: torch.Tensor) -> torch.Tensor:
         return torch.norm(self.position - p, dim=-1)
     

@@ -14,7 +14,7 @@ import torchist
 
 from torchrir.source import Source
 
-ImpulseResponseMethod = Callable[[Tensor, Source, int, float], Tensor]
+ImpulseResponseMethod = Callable[[Tensor, Source, int, float, float], Tensor]
 
 
 class Patch:
@@ -393,7 +393,7 @@ class ConvexRoom(Room):
         impulse_response = (
             impulse_response
             if impulse_response is not None
-            else ImpulseResponseStrategies.histogram
+            else ImpulseResponseStrategies.sinc
         )
         n_samples = int(t_final * fs)
         dt = 1 / fs
@@ -420,17 +420,18 @@ class ConvexRoom(Room):
 
 class ImpulseResponseStrategies:
     @staticmethod
-    def histogram(p: Tensor, s: Source, dt: float, n_samples: int) -> Tensor:
+    def histogram(p: Tensor, s: Source, dt: float, n_samples: int, speed_of_sound: float = 343.0) -> Tensor:
+        d = s.distance_to(p)
         return torchist.histogram(
-            s.delay(p) / dt,
+            d / speed_of_sound / dt,
             bins=n_samples,
             low=0,
             upp=n_samples,
-            weights=s.intensity / (4 * dt * torch.pi * s.distance_to(p)),
+            weights=s.intensity / (4 * torch.pi * d),
         )
 
     @staticmethod
-    def sinc(p: Tensor, s: Source, dt: float, n_samples: int) -> Tensor:
+    def sinc(p: Tensor, s: Source, dt: float, n_samples: int, speed_of_sound: float = 343.0, tw: int = 20) -> Tensor:
         """Method described in https://arxiv.org/pdf/1710.04196
         
         Args:
@@ -442,15 +443,43 @@ class ImpulseResponseStrategies:
         Returns:
             Tensor: _description_
         """
-        
-        return 
-        
 
-    @staticmethod
-    def delta_lp(x, tw: float = 0.01):
-        mask = -tw / 2 < x < tw / 2
-        out = torch.zeros_like(x)
-        t = x[mask]
-        if mask.any():
-            out[mask] = 0.5 * (1 + torch.cos(2*torch.pi / tw * t)) * torch.sinc(t)
-        return out
+        def _delta_lp(x):
+            mask = x.abs() < tw / 2
+            out = torch.zeros_like(x)
+            if mask.any():
+                t = x[mask]
+                out[mask] = 0.5 * (1 + torch.cos(2*torch.pi / tw * t)) * torch.sinc(t)
+            return out
+
+        d = s.distance_to(p)
+
+        def _get_rel_idx(_float_idx):
+            idx = torch.round(_float_idx)
+            return idx - float_idx
+
+        window_radius = tw // 2
+
+
+        float_idx = d / (speed_of_sound * dt)
+        rel_idx = _get_rel_idx(float_idx)
+        h = torchist.histogram(
+            float_idx,
+            bins=n_samples,
+            low=0,
+            upp=n_samples,
+            weights=s.intensity / (4 * torch.pi * d) * _delta_lp(rel_idx),
+        )
+
+        for _ in range(window_radius):
+            for m in (-_, _):
+                h += torchist.histogram(
+                    float_idx + m,
+                    bins=n_samples,
+                    low=0,
+                    upp=n_samples,
+                    weights=s.intensity / (4 * torch.pi * d) * _delta_lp(rel_idx + m),
+                )
+
+        return h
+        

@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Any, Iterable, List, Tuple
+from typing import Any, Callable, Iterable, List, Tuple
 from warnings import warn
 
 from numpy.typing import NDArray
@@ -14,6 +14,8 @@ import torchist
 
 from torchrir.source import Source
 
+ImpulseResponseMethod = Callable[[Tensor, Source, int, float], Tensor]
+
 
 class Patch:
     _t: Tensor = None
@@ -25,7 +27,7 @@ class Patch:
     _matrix_plane: Tensor = None
     _normal_plane: Tensor = None
 
-    __oom_retry_count: int = 0 
+    __oom_retry_count: int = 0
 
     def __init__(self, vertices: Tensor, reflection_coeff: Tensor | float = None):
         for obj in vertices:
@@ -41,7 +43,9 @@ class Patch:
         if self._reflection_coeff is None:
             self._reflection_coeff = torch.full_like(vertices[..., 0, 0], 0.5)
         if isinstance(self._reflection_coeff, float):
-            self._reflection_coeff = torch.full_like(vertices[..., 0, 0], self._reflection_coeff)
+            self._reflection_coeff = torch.full_like(
+                vertices[..., 0, 0], self._reflection_coeff
+            )
 
         # Set inner propertiesPatch
         self._origin = torch.tensor(self._t[:, :1])
@@ -54,7 +58,9 @@ class Patch:
                 self.is_planar.view(-1, *((1,) * (x.ndim - 1))), x, other
             )
 
-        self._matrix_plane = _if_planar((self._t[:, 1:3].clone().detach() - self._origin))
+        self._matrix_plane = _if_planar(
+            (self._t[:, 1:3].clone().detach() - self._origin)
+        )
         self._normal_plane = _if_planar(
             torch.linalg.cross(*self._matrix_plane.moveaxis(1, 0))
         ).unsqueeze(1)
@@ -160,7 +166,9 @@ class Patch:
             self.__oom_retry_count += 1
             # print(torch.cuda.memory_summary())
             for _ in s.chunk(2):
-                yield from self.mirror(_ , force_product=force_product, if_inside=if_inside)
+                yield from self.mirror(
+                    _, force_product=force_product, if_inside=if_inside
+                )
             self.__oom_retry_count -= 1
 
     def _mirror(
@@ -186,9 +194,7 @@ class Patch:
         # inner_product_p_normal = torch.masked.masked_tensor(inner_product_p_normal, valid.expand_as(inner_product_p_normal))
 
         new_positions = (
-            self._origin
-            + p
-            - 2 * inner_product_p_normal * self.normal_plane
+            self._origin + p - 2 * inner_product_p_normal * self.normal_plane
         )[valid]
         new_intensities = (intensity * self._reflection_coeff).unsqueeze(-1)[valid]
         # if torch.masked.is_masked_tensor(new_positions):
@@ -257,10 +263,11 @@ def _dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
     """
     # return (x * y).sum(dim=-1, keepdim=keepdim)
     # res = torch.linalg.vecdot(x, y, dim=-1)
-    res = torch.einsum('...i,...i', x, y)
+    res = torch.einsum("...i,...i", x, y)
     if keepdim:
         res.unsqueeze_(-1)
     return res
+
 
 class Room:
     _walls: Patch | List[Patch]
@@ -268,11 +275,14 @@ class Room:
     @property
     def walls(self) -> Patch | List[Patch]:
         return self._walls
+
     try:
         from matplotlib.figure import Figure
         from mpl_toolkits.mplot3d.axes3d import Axes3D
+
         def plot(self, *args, **kwargs) -> Tuple[Figure, Axes3D]:
             import matplotlib.pyplot as plt
+
             fig = plt.figure("room")
             # 3d plot of all patches
             ax = fig.add_subplot(111, projection="3d")
@@ -280,6 +290,7 @@ class Room:
                 x, y, z = facet.T.tolist()
                 ax.plot_trisurf(x, y, z, triangles=[[0, 1, 2], [1, 2, 0]], **kwargs)
             return fig, ax
+
     except ImportError:
         warn("No plotting support")
 
@@ -288,7 +299,7 @@ class ConvexRoom(Room):
     _points: Iterable[Tensor] = None
     _convex_hull: scipy.spatial.ConvexHull = None
 
-    def __init__(self, points: Iterable[Tensor | NDArray], reflection_coeff: Tensor ):
+    def __init__(self, points: Iterable[Tensor | NDArray], reflection_coeff: Tensor):
         """Constructor of the class `ConvexRoom`
 
         Args:
@@ -299,7 +310,9 @@ class ConvexRoom(Room):
             points = points.detach()
             device = points.device
         self._convex_hull = scipy.spatial.ConvexHull(points.detach().cpu())
-        self._points = torch.tensor(self._convex_hull.points, device=device, dtype=points.dtype)
+        self._points = torch.tensor(
+            self._convex_hull.points, device=device, dtype=points.dtype
+        )
         self._facets = self._points[self._convex_hull.simplices]
         self._walls = Patch(self._facets, reflection_coeff=reflection_coeff)
         self._force_walls_normal_to_point_inwards()
@@ -334,13 +347,19 @@ class ConvexRoom(Room):
     ) -> List[Iterable[Source]]:
         if not isinstance(sources, Source):
             return [
-                self.compute_k_reflected_sources(s, k, force_batch_product=force_batch_product)
+                self.compute_k_reflected_sources(
+                    s, k, force_batch_product=force_batch_product
+                )
                 for s in sources
             ]
         sources = [sources]
         tuple(
             sources.append(
-                iter(self.compute_reflected_sources(sources[-1], force_batch_product=force_batch_product))
+                iter(
+                    self.compute_reflected_sources(
+                        sources[-1], force_batch_product=force_batch_product
+                    )
+                )
             )
             for _ in range(k)
         )
@@ -356,31 +375,66 @@ class ConvexRoom(Room):
                 self.walls.mirror(s, force_product=force_batch_product, if_inside=True)
                 for s in s_list
             ]
-        for _ in self.walls.mirror(s_list, force_product=force_batch_product, if_inside=True):
+        for _ in self.walls.mirror(
+            s_list, force_product=force_batch_product, if_inside=True
+        ):
             yield _
 
     # @torch.compile
-    def compute_rir(self, p: Tensor, s: Source, k: int, t_final: float = 2.0, fs: float = 10000.0) -> Tensor:
+    def compute_rir(
+        self,
+        p: Tensor,
+        s: Source,
+        k: int,
+        t_final: float = 2.0,
+        fs: float = 10000.0,
+        impulse_response: ImpulseResponseMethod = None,
+    ) -> Tensor:
+        impulse_response = (
+            impulse_response
+            if impulse_response is not None
+            else ImpulseResponseMethodStrategies.histogram
+        )
         n_samples = int(t_final * fs)
-        # h = torch.zeros(n_samples)
         dt = 1 / fs
+        # h = torch.zeros(n_samples)
 
-        def _delay(_s: Source, speed_of_sound: float = 343.0) -> torch.IntTensor:
-            return (_s.distance_to(p) / speed_of_sound / dt)
-
-        h = torchist.histogram(_delay(s), bins=n_samples, low=0, upp=n_samples, weights=s.intensity / dt)
-
+        h = impulse_response(p, s, dt, n_samples)
         # For efficiency, compute_reflected_sources is a generator
         s_list = deque([s])
         for _ in range(k):
             print(f"Reflection {_}, reflecting...")
             for __ in range(len(s_list)):
-                for s in self.compute_reflected_sources(s_list.pop(), force_batch_product=True):
-                    print(f"Reflection {_}, adding {s.intensity.nelement()} impulse responses...")
-                    h += torchist.histogram(_delay(s), bins=n_samples, low=0, upp=n_samples, weights= s.intensity / dt)
+                for s in self.compute_reflected_sources(
+                    s_list.pop(), force_batch_product=True
+                ):
+                    print(
+                        f"Reflection {_}, adding {s.intensity.nelement()} impulse responses..."
+                    )
+                    h += impulse_response(p, s, dt, n_samples)
                     if _ <= k - 1:
                         s_list.appendleft(s)
 
+        return h.cpu(), torch.arange(len(h), device="cpu") * dt
 
-        return h.cpu(), torch.arange(len(h), device='cpu') * dt
 
+class ImpulseResponseMethodStrategies:
+    @staticmethod
+    def histogram(p: Tensor, s: Source, dt: float, n_samples: int) -> Tensor:
+        return torchist.histogram(
+            s.delay(p) / dt,
+            bins=n_samples,
+            low=0,
+            upp=n_samples,
+            weights=s.intensity / dt,
+        )
+
+    @staticmethod
+    def sinc(p: Tensor, s: Source, dt: float, n_samples: int) -> Tensor:
+        torchist.histogram(
+            s.delay(p) / dt,
+            bins=n_samples,
+            low=0,
+            upp=n_samples,
+            weights=s.intensity / dt,
+        )

@@ -16,8 +16,10 @@ class Source:
     def p(self) -> torch.Tensor:
         return self.position
 
+    def delay(self, p: torch.Tensor, speed_of_sound: float = 343.0) -> torch.Tensor:
+        return (self.distance_to(p) / speed_of_sound)
 
-    def distance_to(self, p) -> torch.Tensor:
+    def distance_to(self, p: torch.Tensor) -> torch.Tensor:
         return torch.norm(self.position - p, dim=-1)
     
     @classmethod
@@ -30,3 +32,4 @@ class Source:
     def chunk(self, n_chunks: int) -> Iterable['Self']:
         for p, i in zip(self.position.chunk(n_chunks), self.intensity.chunk(n_chunks)):
             yield Source(p, i)
+

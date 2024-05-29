@@ -1,3 +1,4 @@
+from collections import deque
 from typing import Any, Iterable, List, Tuple
 from warnings import warn
 
@@ -7,6 +8,9 @@ import scipy.ndimage
 import torch
 from torch import BoolTensor, Tensor
 from torch.linalg import matrix_rank
+
+import torchist
+
 
 from torchrir.source import Source
 
@@ -21,6 +25,8 @@ class Patch:
     _matrix_plane: Tensor = None
     _normal_plane: Tensor = None
 
+    __oom_retry_count: int = 0 
+
     def __init__(self, vertices: Tensor, reflection_coeff: Tensor | float = None):
         for obj in vertices:
             if obj.shape[-1] != 3:
@@ -33,9 +39,9 @@ class Patch:
 
         self._reflection_coeff = reflection_coeff
         if self._reflection_coeff is None:
-            self._reflection_coeff = torch.ones_like(vertices[..., 0, 0]) * 0.5
+            self._reflection_coeff = torch.full_like(vertices[..., 0, 0], 0.5)
         if isinstance(self._reflection_coeff, float):
-            self._reflection_coeff = torch.ones_like(vertices[..., 0, 0]) * self._reflection_coeff
+            self._reflection_coeff = torch.full_like(vertices[..., 0, 0], self._reflection_coeff)
 
         # Set inner propertiesPatch
         self._origin = torch.tensor(self._t[:, :1])
@@ -142,6 +148,24 @@ class Patch:
         Returns:
             Source: Mirrors of source
         """
+        failed = False
+        try:
+            yield self._mirror(s, force_product=force_product, if_inside=if_inside)
+        except torch.cuda.OutOfMemoryError:
+            failed = True
+        # OutOfMemory Fallback, try splitting the tensor for a couple of times
+        if failed:
+            if self.__oom_retry_count > 10:
+                raise torch.cuda.OutOfMemoryError()
+            self.__oom_retry_count += 1
+            # print(torch.cuda.memory_summary())
+            for _ in s.chunk(2):
+                yield from self.mirror(_ , force_product=force_product, if_inside=if_inside)
+            self.__oom_retry_count -= 1
+
+    def _mirror(
+        self, s: Source, force_product: bool = False, if_inside: bool = False
+    ) -> Source:
         p = s.p
         intensity = s.intensity
         if p.ndim == 1:
@@ -232,7 +256,8 @@ def _dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
         : dot product <x, y>
     """
     # return (x * y).sum(dim=-1, keepdim=keepdim)
-    res = torch.linalg.vecdot(x, y, dim=-1)
+    # res = torch.linalg.vecdot(x, y, dim=-1)
+    res = torch.einsum('...i,...i', x, y)
     if keepdim:
         res.unsqueeze_(-1)
     return res
@@ -274,7 +299,7 @@ class ConvexRoom(Room):
             points = points.detach()
             device = points.device
         self._convex_hull = scipy.spatial.ConvexHull(points.detach().cpu())
-        self._points = torch.tensor(self._convex_hull.points, device=device)
+        self._points = torch.tensor(self._convex_hull.points, device=device, dtype=points.dtype)
         self._facets = self._points[self._convex_hull.simplices]
         self._walls = Patch(self._facets, reflection_coeff=reflection_coeff)
         self._force_walls_normal_to_point_inwards()
@@ -315,7 +340,7 @@ class ConvexRoom(Room):
         sources = [sources]
         tuple(
             sources.append(
-                self.compute_reflected_sources(sources[-1], force_batch_product=force_batch_product)
+                iter(self.compute_reflected_sources(sources[-1], force_batch_product=force_batch_product))
             )
             for _ in range(k)
         )
@@ -331,23 +356,31 @@ class ConvexRoom(Room):
                 self.walls.mirror(s, force_product=force_batch_product, if_inside=True)
                 for s in s_list
             ]
-        return self.walls.mirror(s_list, force_product=force_batch_product, if_inside=True)
+        for _ in self.walls.mirror(s_list, force_product=force_batch_product, if_inside=True):
+            yield _
 
-
+    # @torch.compile
     def compute_rir(self, p: Tensor, s: Source, k: int, t_final: float = 2.0, fs: float = 10000.0) -> Tensor:
-        h = torch.zeros(int(t_final * fs)).cpu()
+        n_samples = int(t_final * fs)
+        # h = torch.zeros(n_samples)
         dt = 1 / fs
 
         def _delay(_s: Source, speed_of_sound: float = 343.0) -> torch.IntTensor:
-            return (_s.distance_to(p) / speed_of_sound / dt).long()
+            return (_s.distance_to(p) / speed_of_sound / dt)
 
-        h[_delay(s)] = s.intensity / dt
+        h = torchist.histogram(_delay(s), bins=n_samples, low=0, upp=n_samples, weights=s.intensity / dt)
+
+        # For efficiency, compute_reflected_sources is a generator
+        s_list = deque([s])
         for _ in range(k):
             print(f"Reflection {_}, reflecting...")
-            s = self.compute_reflected_sources(s,force_batch_product=True)
-            print(f"Reflection {_}, updating impulse response...")
-            for idx, h_inc in zip(_delay(s).cpu(), s.intensity.cpu() / dt):
-                h[idx] += h_inc
+            for __ in range(len(s_list)):
+                for s in self.compute_reflected_sources(s_list.pop(), force_batch_product=True):
+                    print(f"Reflection {_}, adding {s.intensity.nelement()} impulse responses...")
+                    h += torchist.histogram(_delay(s), bins=n_samples, low=0, upp=n_samples, weights= s.intensity / dt)
+                    if _ <= k - 1:
+                        s_list.appendleft(s)
 
-        return h, torch.arange(len(h), device='cpu')*dt
+
+        return h.cpu(), torch.arange(len(h), device='cpu') * dt
 

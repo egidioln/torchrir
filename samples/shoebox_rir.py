@@ -8,10 +8,12 @@ from torchrir.source import Source
 
 torch.set_default_device("cuda")
 torch.torch.set_default_dtype(torch.float)
-REF_DEGREE: int = 10
+REF_DEGREE: int = 9
+SAMPLING_FREQ: float = 22e3
+T_FINAL: float = 1.0
 N_REP_BENCHMARK: int = 10
-ROOM_GEOMETRY: Tuple[int, int, int] = (4, 3, 2)
-WILL_PLOT_ROOM: bool = False
+ROOM_GEOMETRY: Tuple[int, int, int] = (5, 4, 2.3)
+WILL_PLOT_RIR: bool = True
 
 def shoebox_room_source_images():
     points: Iterable[torch.Tensor] = (
@@ -23,28 +25,24 @@ def shoebox_room_source_images():
     cvx_combination = _ / sum(_)
     sources = Source(torch.sum(room.points.T * cvx_combination, dim=1))
 
-    all_sources = room.compute_k_reflected_sources(
-        sources, REF_DEGREE, force_batch_product=True
-    )
+    rir, t = room.compute_rir(torch.zeros(3), sources, k=REF_DEGREE)
     print(
         timeit.timeit(
-            lambda: room.compute_k_reflected_sources(
-                sources, REF_DEGREE, force_batch_product=True
-            ),
+            lambda: room.compute_rir(torch.zeros(3), sources, k=REF_DEGREE, fs=SAMPLING_FREQ, t_final=T_FINAL),
             number=N_REP_BENCHMARK,
         )
         / N_REP_BENCHMARK
     )
 
-    if not WILL_PLOT_ROOM:
+    if not WILL_PLOT_RIR:
         return
     import matplotlib.pyplot as plt
-    room_fig, ax = room.plot(color="blue", alpha=0.2, edgecolor="black")
-
-    for source in all_sources:
-        ax.scatter(*source.p.view(-1, 3).T.detach().cpu().numpy())
+    
+    plt.plot(t, rir)
     plt.show()
-
+    
+    from scipy.io import wavfile
+    wavfile.write("rir_.wav", rate=int(SAMPLING_FREQ), data=rir.cpu().numpy())
 
 if __name__ == "__main__":
     shoebox_room_source_images()

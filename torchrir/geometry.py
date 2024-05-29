@@ -48,9 +48,9 @@ class Patch:
                 self.is_planar.view(-1, *((1,) * (x.ndim - 1))), x, other
             )
 
-        self._matrix_plane = _if_planar((torch.tensor(self._t[:, 1:3]) - self._origin))
+        self._matrix_plane = _if_planar((self._t[:, 1:3].clone().detach() - self._origin))
         self._normal_plane = _if_planar(
-            torch.cross(*self._matrix_plane.moveaxis(1, 0))
+            torch.linalg.cross(*self._matrix_plane.moveaxis(1, 0))
         ).unsqueeze(1)
         self._normal_plane /= self._normal_plane.norm(dim=-1, keepdim=True)
 
@@ -166,7 +166,7 @@ class Patch:
             + p
             - 2 * inner_product_p_normal * self.normal_plane
         )[valid]
-        new_intensities = (intensity * self._reflection_coeff)[valid[..., 0]]
+        new_intensities = (intensity * self._reflection_coeff).unsqueeze(-1)[valid]
         # if torch.masked.is_masked_tensor(new_positions):
         #     new_positions = new_positions.get_data()[new_positions.get_mask()[..., 0]]
         return Source(new_positions, new_intensities)

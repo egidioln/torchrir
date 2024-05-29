@@ -1,5 +1,7 @@
 from itertools import product
+import time
 from typing import Iterable
+from warnings import warn
 from torchrir.geometry import ConvexRoom, Patch, Ray
 import torch
 import pytest
@@ -153,9 +155,12 @@ def test_convexroom_rir():
     source = Source(torch.zeros(3), intensity=torch.ones(1) * 5)
 
     p = torch.tensor([2, 2, .8])
-
+    
+    t0 = time.perf_counter_ns()
     rir, t = room.compute_rir(p, source, k=7)
-
-    1
-    import matplotlib.pyplot as plt
-    plt.plot(t, rir )
+    dt = time.perf_counter_ns() - t0
+    warn(dt/1e9)
+    assert torch.isclose(rir.sum(), torch.tensor(308860.0312))
+    
+    # import matplotlib.pyplot as plt
+    # plt.plot(t, rir )

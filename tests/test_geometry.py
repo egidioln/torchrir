@@ -11,15 +11,15 @@ from torchrir.source import Source
 
 def test_create_patch():
     vertices = torch.randn(3, 3)
-    p = Patch(vertices)
+    _ = Patch(vertices)
 
     with pytest.raises(ValueError):
         vertices = torch.randn(3, 4)
-        p = Patch(vertices)
+        _ = Patch(vertices)
 
     with pytest.raises(ValueError):
         vertices = torch.randn(3, 2)
-        p = Patch(vertices)
+        _ = Patch(vertices)
 
 
 def test_patch_is_planar():
@@ -166,11 +166,12 @@ def test_convexroom_rir_hist():
     p = torch.tensor([2, 2, 0.8], dtype=room_geometry.dtype)
 
     t0 = time.perf_counter_ns()
-    rir, t = room.compute_rir(p, source, k=7, impulse_response=ImpulseResponseStrategies.histogram)
-    dt = time.perf_counter_ns() - t0
-    # warn(dt / 1e9)
+    rir, t = room.compute_rir(
+        p, source, k=7, impulse_response=ImpulseResponseStrategies.histogram
+    )
+    _ = time.perf_counter_ns() - t0  # dt
+    # warn(_ / 1e9)
     assert torch.isclose(rir.sum(), torch.tensor(0.43822792172431946))
-
 
 
 def test_convexroom_rir_sinc():
@@ -186,7 +187,9 @@ def test_convexroom_rir_sinc():
     p = torch.tensor([2, 2, 0.8], dtype=room_geometry.dtype)
 
     t0 = time.perf_counter_ns()
-    rir, t = room.compute_rir(p, source, k=7, impulse_response=ImpulseResponseStrategies.sinc)
+    rir, t = room.compute_rir(
+        p, source, k=7, impulse_response=ImpulseResponseStrategies.sinc
+    )
     dt = time.perf_counter_ns() - t0
     warn(dt / 1e9)
     assert torch.isclose(rir.sum(), torch.tensor(1.185165524482727), atol=1e-2)

@@ -25,7 +25,6 @@ def benchmark_random_rays_on_1_simplice():
 
         print(hit / N_RAYS)
 
-
     def benchmark_broadcast():
         hit = Ray(torch.randn(N_RAYS, 3, device=_DV)).intersects(p)[0].sum().item()
 

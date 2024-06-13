@@ -10,7 +10,6 @@ N_BENCHMARK = 100
 def benchmark_random_rays_on_random_simplices():
     results = dict()
 
-
     def benchmark_sequential():
         hit = 0.0
         for _ in range(_N):
@@ -25,9 +24,9 @@ def benchmark_random_rays_on_random_simplices():
 
         print(hit / _N)
 
-
     p = Patch(torch.randn(_N, 3, 3, device=_DV))
     ray = Ray(torch.randn(_N, 3, device=_DV))
+
     def benchmark_broadcast():
         hit = ray.intersects(p)[0].sum().item()
         if abs(hit / _N - 0.125) > 1e-1:
@@ -45,7 +44,7 @@ def benchmark_random_rays_on_random_simplices():
     ]:
         # benchmark_sequential = torch.compile(benchmark_sequential)
         benchmark()
-        
+
         results[benchmark] = timeit.timeit(benchmark, number=N_BENCHMARK) / N_BENCHMARK
         print(benchmark.__name__, results[benchmark])
 

@@ -13,6 +13,7 @@ N_REP_BENCHMARK: int = 10
 ROOM_GEOMETRY: Tuple[int, int, int] = (4, 3, 2)
 WILL_PLOT_ROOM: bool = False
 
+
 def shoebox_room_source_images():
     points: Iterable[torch.Tensor] = (
         torch.tensor(ROOM_GEOMETRY) * torch.tensor(list(product((-1, 1), repeat=3))) / 2
@@ -39,6 +40,7 @@ def shoebox_room_source_images():
     if not WILL_PLOT_ROOM:
         return
     import matplotlib.pyplot as plt
+
     room_fig, ax = room.plot(color="blue", alpha=0.2, edgecolor="black")
 
     for source in all_sources:

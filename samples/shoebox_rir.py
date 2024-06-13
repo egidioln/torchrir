@@ -15,6 +15,7 @@ N_REP_BENCHMARK: int = 2
 ROOM_GEOMETRY: Tuple[int, int, int] = (3, 3, 3)
 WILL_PLOT_RIR: bool = True
 
+
 def shoebox_room_source_images():
     points: Iterable[torch.Tensor] = (
         torch.tensor(ROOM_GEOMETRY) * torch.tensor(list(product((-1, 1), repeat=3))) / 2
@@ -28,7 +29,9 @@ def shoebox_room_source_images():
     rir, t = room.compute_rir(torch.zeros(3), sources, k=REF_DEGREE)
     print(
         timeit.timeit(
-            lambda: room.compute_rir(torch.zeros(3), sources, k=REF_DEGREE, fs=SAMPLING_FREQ, t_final=T_FINAL),
+            lambda: room.compute_rir(
+                torch.zeros(3), sources, k=REF_DEGREE, fs=SAMPLING_FREQ, t_final=T_FINAL
+            ),
             number=N_REP_BENCHMARK,
         )
         / N_REP_BENCHMARK
@@ -37,16 +40,20 @@ def shoebox_room_source_images():
     if not WILL_PLOT_RIR:
         return
     import matplotlib.pyplot as plt
-    
+
     plt.plot(t, rir)
     plt.show()
     f = torch.fft.fftshift(torch.fft.fftfreq(len(t), t[1])).cpu()
 
-    plt.semilogx(f[f>0].cpu(), (torch.fft.fftshift(torch.fft.fft(rir-rir.mean())))[f>0].abs().cpu())
+    plt.semilogx(
+        f[f > 0].cpu(),
+        (torch.fft.fftshift(torch.fft.fft(rir - rir.mean())))[f > 0].abs().cpu(),
+    )
     plt.xlim(20, 1000)
     plt.show()
-    
+
     from scipy.io import wavfile
+
     wavfile.write("rir_.wav", rate=int(SAMPLING_FREQ), data=rir.cpu().numpy())
 
 

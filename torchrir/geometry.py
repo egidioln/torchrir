@@ -2,7 +2,6 @@ from collections import deque
 from typing import Any, Callable, Iterable, List, Tuple
 from warnings import warn
 
-from numpy.typing import NDArray
 import scipy
 import scipy.ndimage
 import torch
@@ -14,6 +13,7 @@ import torchist
 
 from torchrir.source import Source
 
+NDArray = type('NDArray')
 ImpulseResponseMethod = Callable[[Tensor, Source, int, float, float], Tensor]
 
 
@@ -221,7 +221,7 @@ class Ray:
         self.origin = origin
         self.direction = direction / norm_direction
 
-    @torch.compile
+    # @torch.compile
     def intersects(self, patch: Patch) -> Tuple[BoolTensor, Tensor]:
         if torch.all(patch.is_planar):
             return self._intersects_planar_patch(patch)

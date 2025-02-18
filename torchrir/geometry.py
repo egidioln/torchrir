@@ -278,7 +278,7 @@ class Ray:
 
 
 def _dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
-    """Broadcastable version of torch.dot
+    r"""Broadcastable version of [`torch.dot`](torch.dot)
 
 
     Args:
@@ -287,7 +287,7 @@ def _dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
         keepdim : whether to keep the last dimension. Default, False
 
     Returns:
-        dot product <x, y>
+        dot product $\langle x, y\rangle = {x^\top y}$
     """
     # return (x * y).sum(dim=-1, keepdim=keepdim)
     # res = torch.linalg.vecdot(x, y, dim=-1)

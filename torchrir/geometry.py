@@ -1,5 +1,5 @@
 from collections import deque
-from typing import Any, Callable, Iterable, List, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Tuple
 from warnings import warn
 
 import scipy
@@ -18,9 +18,17 @@ ImpulseResponseMethod = Callable[[Tensor, Source, int, float, float], Tensor]
 
 
 class Patch:
-    r"""A patch is defined as a set of $n$ co-planar points $P=\{p_0, ... p_{n-1}\} \in 2^{\mathrm{R}^3}$ and an interpolating function $f(x)$ defining a surface at the locus $S_P = \{x\in\mathrm{R}^3~:~f(x)=0\}$ among them that"""
+    r"""A 3D patch $P$ of surface
 
-    _vertices: Tensor = None
+    A patch is defined as the convex-hull of set of $n$ co-planar points $P:=\mathrm{co}\Big(\{p_0, ... p_{n-1}\}\Big)
+    \in 2^{\mathbb{R}^3}$.
+
+    Args:
+        vertices: tensor with shape $(..., n, 3)$ where $n$ is the number of points defining the patch $P$
+        reflection_coeff: tensor with shape $(...)$ defining the reflectivity coefficient of the patch.
+    """
+
+    _vertices: Tensor
     _reflection_coeff: Tensor = None
     _origin: Tensor = None
     _rel_vertices: Tensor = None
@@ -31,7 +39,9 @@ class Patch:
 
     __oom_retry_count: int = 0
 
-    def __init__(self, vertices: Tensor, reflection_coeff: Tensor | float = None):
+    def __init__(
+        self, vertices: Tensor, reflection_coeff: Optional[Tensor | float] = None
+    ):
         for obj in vertices:
             if obj.shape[-1] != 3:
                 raise ValueError(

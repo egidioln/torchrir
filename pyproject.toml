@@ -18,6 +18,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "coverage",
     "flaky",
     "pytest",
     "pytest-cov",

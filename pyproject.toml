@@ -10,23 +10,25 @@ description = "TorchRIR is a library for simulating Room Impulse Responses writt
 
 requires-python = ">=3.9"
 dependencies = [
-    "scipy>=1.13.1",
-    "torch==2.5.1",
+    "scipy",
+    "torch",
     "torchist",
 ]
 
 
 [dependency-groups]
 dev = [
-    "flaky>=3.8.1",
+    "flaky",
     "pytest",
-    "pytest-cov>=6.0.0",
+    "pytest-cov",
     "ruff",
-    "sphinx-autobuild>=2024.10.3",
-    "sphinx>=7.4.7",
-    "myst-parser>=3.0.1",
-    "sphinx-autodoc2>=0.5.0",
-    "shibuya>=2025.2.14",
+]
+docs = [
+    "sphinx-autobuild",
+    "sphinx",
+    "myst-parser",
+    "sphinx-autodoc2",
+    "shibuya",
 ]
 
 [tool.setuptools.packages.find]

@@ -26,7 +26,7 @@ jobs:
     - uses: actions/configure-pages@v5
     - uses: ammaraskar/sphinx-action@master
       with:
-        docs-folder: "./_site"
+        docs-folder: "docs"
     - name: Upload artifact
       uses: actions/upload-pages-artifact@v3
   

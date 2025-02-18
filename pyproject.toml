@@ -1,3 +1,38 @@
+[project]
+name = "TorchRIR"
+version = "0.0.1-dev"
+authors = [
+  {name = "Lucas N. Egidio", email= "lucasegidio1@gmail.com"},
+]
+description = "TorchRIR is a library for simulating Room Impulse Responses written in PyTorch for GPU acceleration and differentiability."
+
+
+
+requires-python = ">=3.9"
+dependencies = [
+    "scipy>=1.13.1",
+    "torch==2.5.1",
+    "torchist",
+]
+
+
+[dependency-groups]
+dev = [
+    "flaky>=3.8.1",
+    "pytest",
+    "pytest-cov>=6.0.0",
+    "ruff",
+    "sphinx-autobuild>=2024.10.3",
+    "sphinx>=7.4.7",
+    "myst-parser>=3.0.1",
+    "sphinx-autodoc2>=0.5.0",
+    "shibuya>=2025.2.14",
+]
+
+[tool.setuptools.packages.find]
+include = ["torchrir*"]  # package names should match these glob patterns (["*"] by default)
+
+
 [tool.pytest.ini_options]
 pythonpath = [
   "."

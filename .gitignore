@@ -1,4 +1,12 @@
 **/__pycache__
 .env
-.vscode
+.vscode/*
+!.vscode/settings.json
 .venv
+.coverage
+
+build
+dist
+
+docs/build
+docs/source/apidocs

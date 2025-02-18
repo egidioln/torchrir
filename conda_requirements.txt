@@ -1,6 +1,0 @@
-pytorch
-scipy
-
-# dev
-flake8
-pytest

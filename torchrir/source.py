@@ -3,6 +3,8 @@ import torch
 
 
 class Source:
+    """A source $S$"""
+
     position: torch.Tensor = None
     intensity: float = None
 

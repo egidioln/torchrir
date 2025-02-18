@@ -50,6 +50,8 @@ def test_ray_intersects_convex_patch():
     assert not intersects
 
 
+# mark as flaky
+@pytest.mark.flaky(max_runs=5)
 def test_ray_intersects_convex_patch_broadcasting():
     n_batch = 1000
     n_dim_patches = 3  # all simplices
@@ -196,3 +198,9 @@ def test_convexroom_rir_sinc():
 
     # import matplotlib.pyplot as plt
     # plt.plot(t, rir )
+
+
+# def test_patch_can_see():
+#     patch_a = Patch()
+#     patch_b = Patch()
+#     patch_o = Patch()

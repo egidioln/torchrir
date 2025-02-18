@@ -18,7 +18,9 @@ ImpulseResponseMethod = Callable[[Tensor, Source, int, float, float], Tensor]
 
 
 class Patch:
-    _t: Tensor = None
+    r"""A patch is defined as a set of $n$ co-planar points $P=\{p_0, ... p_{n-1}\} \in 2^{\mathrm{R}^3}$ and an interpolating function $f(x)$ defining a surface at the locus $S_P = \{x\in\mathrm{R}^3~:~f(x)=0\}$ among them that"""
+
+    _vertices: Tensor = None
     _reflection_coeff: Tensor = None
     _origin: Tensor = None
     _rel_vertices: Tensor = None
@@ -35,7 +37,7 @@ class Patch:
                 raise ValueError(
                     f"Expected tensors of shape (..., 3,), got {obj.shape}"
                 )
-        self._t = (
+        self._vertices = (
             torch.tensor(vertices).unsqueeze(0) if vertices.ndim == 2 else vertices
         )
 
@@ -48,8 +50,8 @@ class Patch:
             )
 
         # Set inner propertiesPatch
-        self._origin = torch.tensor(self._t[:, :1])
-        self._rel_vertices = torch.tensor(self._t) - self._origin
+        self._origin = torch.tensor(self._vertices[:, :1])
+        self._rel_vertices = torch.tensor(self._vertices) - self._origin
 
         self._is_planar = matrix_rank(self._rel_vertices) == 2
 
@@ -59,7 +61,7 @@ class Patch:
             )
 
         self._matrix_plane = _if_planar(
-            (self._t[:, 1:3].clone().detach() - self._origin)
+            (self._vertices[:, 1:3].clone().detach() - self._origin)
         )
         self._normal_plane = _if_planar(
             torch.linalg.cross(*self._matrix_plane.moveaxis(1, 0))
@@ -68,7 +70,7 @@ class Patch:
 
         # Try to define if is convex
         self._is_convex = _if_planar(torch.tensor(torch.nan), False)
-        if self._t.shape[1] <= 3:
+        if self._vertices.shape[1] <= 3:
             self._is_convex[:] = True
 
     @property
@@ -208,6 +210,20 @@ class Patch:
             self._normal_plane, point - self._origin, keepdim=True
         ).sign()
 
+    def can_see(self, other: "Patch") -> bool:
+        """Checks if this patch can see the other one."""
+        if self.is_convex and other.is_convex:
+            return self._convex_can_see(other)
+        return NotImplementedError("Method not implemented for non-convex patches.")
+
+    def _convex_can_see(self, other: "Patch"):
+        """Checks if this convex patch can see the other one.
+
+        Convex Patch A can see the convex patch B if and only if
+
+        """
+        pass
+
 
 class Ray:
     def __init__(self, direction: Tensor, origin: Tensor = None) -> None:
@@ -254,13 +270,14 @@ class Ray:
 def _dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
     """Broadcastable version of torch.dot
 
+
     Args:
-        x : tensor x
-        y : tensor y
+        x: tensor $x$
+        y: tensor $y$
         keepdim : whether to keep the last dimension. Default, False
 
     Returns:
-        : dot product <x, y>
+        dot product <x, y>
     """
     # return (x * y).sum(dim=-1, keepdim=keepdim)
     # res = torch.linalg.vecdot(x, y, dim=-1)

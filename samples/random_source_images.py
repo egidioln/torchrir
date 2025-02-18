@@ -34,6 +34,7 @@ def random_source_images():
     )
 
     import matplotlib.pyplot as plt
+
     room_fig, ax = room.plot(color="blue", alpha=0.2, edgecolor="black")
 
     for source in all_sources:

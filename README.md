@@ -1,4 +1,7 @@
 # torchRIR
+![Tests Status](https://img.shields.io/github/actions/workflow/status/egidioln/torchrir/python-package.yml?label=Tests)
+[![Docs](https://img.shields.io/badge/Docs-latest-blue)](https://egidioln.github.io/torchrir/)
+
 A [PyTorch](https://pytorch.org/) based library for computing [Room Impulse Responses](https://paperswithcode.com/task/room-impulse-response). This would allow backpropagating through RIR data ([RT60](https://en.wikipedia.org/wiki/Reverberation#Sabine_equation), [room modes](https://en.wikipedia.org/wiki/Room_modes)) on fast simulations performed in [CUDA](https://developer.nvidia.com/cuda-toolkit). 
 
 ## v0.1.0 Roadmap

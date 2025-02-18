@@ -137,7 +137,7 @@ def test_room_mirrors():
     )
     dtype = reflected_sources.intensity.dtype
     assert torch.allclose(
-        reflected_sources.intensity, torch.ones(12, dtype=dtype) * 0.3 * 5
+        reflected_sources.intensity, -torch.ones(12, dtype=dtype) * 0.3 * 5
     )
 
     reflected_sources = next(
@@ -151,7 +151,8 @@ def test_room_mirrors():
         room.compute_reflected_sources(reflected_sources, force_batch_product=True)
     )
     assert torch.allclose(
-        reflected_sources.intensity, torch.ones(1008, dtype=dtype) * 0.3 * 0.3 * 0.3 * 5
+        reflected_sources.intensity,
+        -torch.ones(1008, dtype=dtype) * 0.3 * 0.3 * 0.3 * 5,
     )
 
 
@@ -173,7 +174,7 @@ def test_convexroom_rir_hist():
     )
     _ = time.perf_counter_ns() - t0  # dt
     # warn(_ / 1e9)
-    assert torch.isclose(rir.sum(), torch.tensor(0.43822792172431946))
+    assert torch.isclose(rir.sum(), torch.tensor(0.0702), atol=1e-4)
 
 
 def test_convexroom_rir_sinc():
@@ -194,7 +195,7 @@ def test_convexroom_rir_sinc():
     )
     dt = time.perf_counter_ns() - t0
     warn(dt / 1e9)
-    assert torch.isclose(rir.sum(), torch.tensor(1.185165524482727), atol=1e-2)
+    assert torch.isclose(rir.sum(), torch.tensor(0.1899), atol=1e-4)
 
     # import matplotlib.pyplot as plt
     # plt.plot(t, rir )

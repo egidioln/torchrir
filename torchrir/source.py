@@ -1,3 +1,5 @@
+"""Source Module"""
+
 from typing import Iterable, Self
 import torch
 

@@ -20,6 +20,8 @@ dependencies = [
 dev = [
     "coverage",
     "flaky",
+    "ipykernel",
+    "matplotlib",
     "pytest",
     "pytest-cov",
     "ruff",
@@ -30,6 +32,7 @@ docs = [
     "myst-parser",
     "sphinx-autodoc2",
     "shibuya",
+    "myst-nb",
 ]
 
 [tool.setuptools.packages.find]

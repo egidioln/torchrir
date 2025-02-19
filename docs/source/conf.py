@@ -23,8 +23,8 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.intersphinx",
     "sphinx.ext.mathjax",
-    "myst_parser",
     "autodoc2",
+    "myst_nb",
 ]
 
 intersphinx_mapping = {
@@ -41,6 +41,8 @@ autodoc2_packages = [
         "auto_mode": True,
     },
 ]
+autodoc2_hidden_objects = ["undoc", "dunder", "private", "inherited"]
+
 autodoc2_docstring_parser_regexes = [
     # this will render all docstrings as Markdown
     (r".*", "source.docstrings_parser"),

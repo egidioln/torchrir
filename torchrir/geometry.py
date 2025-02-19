@@ -64,8 +64,8 @@ class Patch:
             )
 
         # Set inner propertiesPatch
-        self._origin = torch.tensor(self._vertices[:, :1])
-        self._rel_vertices = torch.tensor(self._vertices) - self._origin
+        self._origin = _as_tensor(self._vertices[:, :1])
+        self._rel_vertices = _as_tensor(self._vertices) - self._origin
 
         self._is_planar = matrix_rank(self._rel_vertices) == 2
 
@@ -551,3 +551,9 @@ def dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
     if keepdim:
         res.unsqueeze_(-1)
     return res
+
+
+def _as_tensor(x: Any) -> Tensor:
+    if isinstance(x, Tensor):
+        return x
+    return torch.tensor(x)

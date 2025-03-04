@@ -4,9 +4,11 @@
 !.vscode/settings.json
 .venv
 .coverage
+uv.lock
 
 build
 dist
+*.egg-info
 
 docs/build
 docs/source/apidocs

@@ -176,7 +176,12 @@ def test_convexroom_rir_hist():
     )
     _ = time.perf_counter_ns() - t0  # dt
     # warn(_ / 1e9)
-    assert torch.isclose(rir.sum(), torch.tensor(0.0099), atol=1e-4)
+    assert torch.isclose(rir.sum(), torch.tensor(0.0), atol=1e-3), (
+        "RIR mean should be zero "
+    )
+    assert torch.isclose(rir.norm(), torch.tensor(0.1431), atol=1e-3), (
+        "RIR norm shouldd doesn't match expected value"
+    )
 
 
 def test_convexroom_rir_sinc():
@@ -197,7 +202,12 @@ def test_convexroom_rir_sinc():
     )
     dt = time.perf_counter_ns() - t0
     warn(dt / 1e9)
-    assert torch.isclose(rir.sum(), torch.tensor(0.0247), atol=1e-4)
+    assert torch.isclose(rir.sum(), torch.tensor(0.0), atol=1e-3), (
+        "RIR mean should be zero"
+    )
+    assert torch.isclose(rir.norm(), torch.tensor(0.3595), atol=1e-3), (
+        "RIR norm shouldd doesn't match expected value"
+    )
 
     # import matplotlib.pyplot as plt
     # plt.plot(t, rir )

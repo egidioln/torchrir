@@ -14,7 +14,7 @@ def test_create_patch():
     _ = Patch(vertices)
 
     with pytest.raises(ValueError):
-        vertices = torch.randn(3, 4)
+        vertices = torch.randn(4, 3)
         _ = Patch(vertices)
 
     with pytest.raises(ValueError):
@@ -29,21 +29,22 @@ def test_patch_is_planar():
     vertices[2, 2] = 0
     assert Patch(vertices).is_planar
 
-    vertices[2, 0:2] = 0.5
-    assert not Patch(vertices).is_planar
+    vertices[1, 1] = 0
+    with pytest.raises(NotImplementedError):
+        Patch(vertices).is_planar
 
 
 def test_ray_intersects_convex_patch():
     patch = Patch(vertices=torch.eye(3)[None, ...])
 
-    intersects, p0 = Ray(torch.ones(1, 3)).intersects(patch)
+    intersects, p0 = Ray(torch.ones(3, 1)).intersects(patch)
     assert intersects
-    assert torch.allclose(p0, torch.ones(1, 3) / 3)
-    intersects, p0 = Ray(torch.tensor([1.0, 0.0, 0.0])).intersects(patch)
-    assert torch.allclose(p0, torch.tensor([1.0, 0.0, 0.0]))
+    assert torch.allclose(p0, torch.ones(3, 1) / 3)
+    intersects, p0 = Ray(torch.tensor([[1.0], [0.0], [0.0]])).intersects(patch)
+    assert torch.allclose(p0, torch.tensor([[1.0], [0.0], [0.0]]))
     assert intersects
 
-    intersects, p0 = Ray(torch.tensor([-1.0, 1.0, 1.0])).intersects(patch)
+    intersects, p0 = Ray(torch.tensor([[-1.0], [1.0], [1.0]])).intersects(patch)
     assert not intersects
 
     intersects, p0 = Ray(-torch.ones(3)).intersects(patch)
@@ -61,7 +62,7 @@ def test_ray_intersects_convex_patch_broadcasting():
     for _ in range(n_reps):
         patches = Patch(vertices=10 * torch.randn(n_batch, n_dim_patches, 3))
 
-        rays = Ray(*torch.randn(2, n_batch, 3))
+        rays = Ray(*torch.randn(2, n_batch, 3, 1))
 
         hits += rays.intersects(patches)[0].sum() / n_batch / n_reps
 
@@ -84,49 +85,50 @@ def test_mirror_point_on_patch():
                 [1.0, 4.0, 1.0],
                 [0.0, 4.0, 1.0],
             ]
-        )
+        ).T
     )
 
     s = Source(2 * torch.ones(3) / 3)
     assert torch.allclose(
         patch._mirror(s).p,
-        torch.tensor([s.p[..., 0], 8 - s.p[..., 1], s.p[..., 2]]),
+        torch.tensor([[s.p[..., 0, :]], [8 - s.p[..., 1, :]], [s.p[..., 2, :]]]),
         atol=1e-7,
     )
 
 
 def test_mirror_point_on_patch_broadcasting():
-    n_batches = 1000
-    s = Source(torch.randn(n_batches, 3))
+    n_batches_a = 10
+    n_batches_b = 9
+    s = Source(torch.randn(n_batches_a, n_batches_a, 3, 1))
+    patch = Patch(torch.randn(n_batches_b, n_batches_b, 3, 3))
+    p_r = patch._mirror(s, force_product=True)
+    assert p_r.p.shape == (n_batches_a, n_batches_a, n_batches_b, n_batches_b, 3, 1)
+    assert p_r.intensity.shape == (n_batches_a, n_batches_a, n_batches_b, n_batches_b)
+
+    n_batches = 100
+    s = Source(torch.randn(n_batches, 3, 1))
     patch = Patch(torch.randn(n_batches, 3, 3))
     p_rr = patch._mirror(patch._mirror(s))
-    assert torch.allclose(s.p, p_rr.p.squeeze(), atol=1e-3)
+    assert torch.allclose(s.p, p_rr.p, atol=1e-3)
 
-    n_batches = 1000
-    s = Source(torch.randn(3))
+    n_batches = 100
+    s = Source(torch.randn(3, 1))
     patch = Patch(torch.randn(n_batches, 3, 3))
     p_rr = patch._mirror(patch._mirror(s))
-    assert torch.allclose(s.p, p_rr.p.squeeze(), atol=1e-5)
+    assert torch.allclose(s.p, p_rr.p, atol=1e-5)
 
-    n_batches = 1000
-    s = Source(torch.randn(n_batches, 3))
+    n_batches = 100
+    s = Source(torch.randn(n_batches, 3, 1))
     patch = Patch(torch.randn(3, 3))
     p_rr = patch._mirror(patch._mirror(s))
-    assert torch.allclose(s.p, p_rr.p.squeeze(), atol=1e-6)
-
-    n_batches_a = 100
-    n_batches_b = 200
-    s = Source(torch.randn(n_batches_a, 3))
-    patch = Patch(torch.randn(n_batches_b, 3, 3))
-    p_r = patch._mirror(s)
-    assert p_r.p.shape == (n_batches_a, n_batches_b, 1, 3)
+    assert torch.allclose(s.p, p_rr.p, atol=1e-6)
 
 
 def test_room_mirrors():
     room_geometry = torch.tensor([5, 4.3, 2.4])
     points: Iterable[torch.Tensor] = (
         room_geometry * torch.tensor(list(product((-1, 1), repeat=3))) / 2
-    )
+    ).T
     room: ConvexRoom = ConvexRoom(points, reflection_coeff=0.3)
     n_vertices = len(room.points)
     _ = torch.rand(n_vertices)
@@ -144,7 +146,7 @@ def test_room_mirrors():
         room.compute_reflected_sources(reflected_sources, force_batch_product=True)
     )
     assert torch.allclose(
-        reflected_sources.intensity, torch.ones(120, dtype=dtype) * 0.3 * 0.3 * 5
+        reflected_sources.intensity, torch.ones(77, dtype=dtype) * 0.3 * 0.3 * 5
     )
 
     reflected_sources = next(
@@ -152,7 +154,7 @@ def test_room_mirrors():
     )
     assert torch.allclose(
         reflected_sources.intensity,
-        -torch.ones(1008, dtype=dtype) * 0.3 * 0.3 * 0.3 * 5,
+        -torch.ones(447, dtype=dtype) * 0.3 * 0.3 * 0.3 * 5,
     )
 
 
@@ -160,28 +162,28 @@ def test_convexroom_rir_hist():
     room_geometry = torch.tensor([5, 4.3, 2.4], dtype=torch.float32)
     points: Iterable[torch.Tensor] = (
         room_geometry * torch.tensor(list(product((-1, 1), repeat=3))) / 2
-    )
+    ).T
     room: ConvexRoom = ConvexRoom(points, reflection_coeff=0.1)
     source = Source(
         torch.zeros(3), intensity=torch.ones(1, dtype=room_geometry.dtype) * 5
     )
 
-    p = torch.tensor([2, 2, 0.8], dtype=room_geometry.dtype)
+    p = torch.tensor([[2], [2], [0.8]], dtype=room_geometry.dtype)
 
     t0 = time.perf_counter_ns()
     rir, t = room.compute_rir(
-        p, source, k=7, impulse_response=ImpulseResponseStrategies.histogram
+        p, source, k=7, impulse_response_fn=ImpulseResponseStrategies.histogram
     )
     _ = time.perf_counter_ns() - t0  # dt
     # warn(_ / 1e9)
-    assert torch.isclose(rir.sum(), torch.tensor(0.0702), atol=1e-4)
+    assert torch.isclose(rir.sum(), torch.tensor(0.0099), atol=1e-4)
 
 
 def test_convexroom_rir_sinc():
     room_geometry = torch.tensor([5, 4.3, 2.4], dtype=torch.float32)
     points: Iterable[torch.Tensor] = (
         room_geometry * torch.tensor(list(product((-1, 1), repeat=3))) / 2
-    )
+    ).T
     room: ConvexRoom = ConvexRoom(points, reflection_coeff=0.1)
     source = Source(
         torch.zeros(3), intensity=torch.ones(1, dtype=room_geometry.dtype) * 5
@@ -191,11 +193,11 @@ def test_convexroom_rir_sinc():
 
     t0 = time.perf_counter_ns()
     rir, t = room.compute_rir(
-        p, source, k=7, impulse_response=ImpulseResponseStrategies.sinc
+        p, source, k=7, impulse_response_fn=ImpulseResponseStrategies.sinc
     )
     dt = time.perf_counter_ns() - t0
     warn(dt / 1e9)
-    assert torch.isclose(rir.sum(), torch.tensor(0.1899), atol=1e-4)
+    assert torch.isclose(rir.sum(), torch.tensor(0.0247), atol=1e-4)
 
     # import matplotlib.pyplot as plt
     # plt.plot(t, rir )

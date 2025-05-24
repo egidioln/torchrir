@@ -1,45 +1,38 @@
 [project]
 name = "TorchRIR"
 version = "0.0.1-dev"
-authors = [
-  {name = "Lucas N. Egidio", email= "lucasegidio1@gmail.com"},
-]
+authors = [{ name = "Lucas N. Egidio", email = "lucasegidio1@gmail.com" }]
 description = "TorchRIR is a library for simulating Room Impulse Responses written in PyTorch for GPU acceleration and differentiability."
 
 
-
 requires-python = ">=3.9"
-dependencies = [
-    "scipy",
-    "torch",
-    "torchist",
-]
+dependencies = ["einops", "scipy", "torch", "torchist"]
 
 
 [dependency-groups]
 dev = [
-    "coverage",
-    "flaky",
-    "ipykernel",
-    "matplotlib",
-    "pytest",
-    "pytest-cov",
-    "ruff",
+  "coverage",
+  "flaky",
+  "ipykernel",
+  "matplotlib",
+  "pytest",
+  "pytest-cov",
+  "ruff",
 ]
 docs = [
-    "sphinx-autobuild",
-    "sphinx",
-    "myst-parser",
-    "sphinx-autodoc2",
-    "shibuya",
-    "myst-nb",
+  "sphinx-autobuild",
+  "sphinx",
+  "myst-parser",
+  "sphinx-autodoc2",
+  "shibuya",
+  "myst-nb",
 ]
 
 [tool.setuptools.packages.find]
-include = ["torchrir*"]  # package names should match these glob patterns (["*"] by default)
+include = [
+  "torchrir*",
+] # package names should match these glob patterns (["*"] by default)
 
 
 [tool.pytest.ini_options]
-pythonpath = [
-  "."
-]
+pythonpath = ["."]

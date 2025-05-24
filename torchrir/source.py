@@ -1,6 +1,6 @@
 """Source Module"""
 
-from typing import Iterable, Self
+from typing import Iterable, Optional, Self
 import torch
 
 
@@ -9,15 +9,19 @@ class Source:
 
     position: torch.Tensor
     """A 3D vector $p$ defining position of the point source"""
-    intensity: float = None
-    """An real number defining its intensity (in Watts)"""
+    intensity: torch.Tensor
+    """A real number defining its intensity (in Watts)"""
 
-    def __init__(self, position: torch.Tensor, intensity: torch.Tensor = None) -> None:
+    def __init__(
+        self, position: torch.Tensor, intensity: Optional[torch.Tensor] = None
+    ) -> None:
         if position.ndim == 1:
-            position = position.unsqueeze(0)
+            position = position.unsqueeze(1)
         self.position = position
         self.intensity = (
-            intensity if intensity is not None else torch.ones_like(position[..., 0])
+            torch.tensor(intensity)
+            if intensity is not None
+            else torch.ones_like(position[..., 0, 0])
         )
 
     @property
@@ -46,7 +50,7 @@ class Source:
         Returns:
             Distance between source and $p_0$
         """
-        return torch.norm(self.position - p0, dim=-1)
+        return torch.norm(self.position - p0, dim=-2)[..., 0]
 
     @classmethod
     def merge(cls, s_list: Iterable[Self]) -> Self:
@@ -55,6 +59,6 @@ class Source:
             intensity=torch.cat(tuple(s.intensity for s in s_list), dim=0),
         )
 
-    def chunk(self, n_chunks: int) -> Iterable[Self]:
+    def chunk(self, n_chunks: int) -> Iterable["Source"]:
         for p, i in zip(self.position.chunk(n_chunks), self.intensity.chunk(n_chunks)):
             yield Source(p, i)

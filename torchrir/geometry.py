@@ -1,13 +1,14 @@
 """Geometry module"""
 
 from collections import deque
-from typing import Any, Callable, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Iterable, List, Optional, Protocol, Tuple
 from warnings import warn
 
+import numpy as np
 import scipy
-import scipy.ndimage
+from einops import einsum, rearrange
 import torch
-from torch import BoolTensor, Tensor
+from torch import Tensor, Tensor
 from torch.linalg import matrix_rank
 
 from numpy.typing import NDArray
@@ -16,7 +17,117 @@ import torchist
 
 from torchrir.source import Source
 
-ImpulseResponseMethod = Callable[[Tensor, Source, int, float, float], Tensor]
+
+class ImpulseResponseMethod(Protocol):
+    """A callable that computes the impulse response of a source at a given point.
+
+    Args:
+        p: point at which the impulse response is computed
+        s: Source
+        dt: Sampling time ( 1 / sampling frequency)
+        n_samples: Number of samples in the impulse response
+
+    Returns:
+        A tensor with shape (..., n_samples) containing the impulse response.
+    """
+
+    @staticmethod
+    def __call__(
+        p: Tensor,
+        s: Source,
+        dt: float,
+        n_samples: int,
+        speed_of_sound: float = 343.0,
+        tw: int = 20,
+    ) -> Tensor: ...
+
+
+class ImpulseResponseStrategies:
+    """A class containing strategies to build an impulse response."""
+
+    @staticmethod
+    def histogram(
+        p: Tensor, s: Source, dt: float, n_samples: int, speed_of_sound: float = 343.0
+    ) -> Tensor:
+        d = s.distance_to(p)
+        return torchist.histogram(
+            d / speed_of_sound / dt,
+            bins=n_samples,
+            low=0,
+            upp=n_samples,
+            weights=s.intensity / (4 * torch.pi * d),
+        )
+
+    @staticmethod
+    def sinc(
+        p: Tensor,
+        s: Source,
+        dt: float,
+        n_samples: int,
+        speed_of_sound: float = 343.0,
+        tw: int = 20,
+    ) -> Tensor:
+        """Method described in https://arxiv.org/pdf/1710.04196
+
+        Args:
+            p (Tensor): point at which the impulse response is computed
+            s (Source): Source
+            dt (float): Sampling time ( 1 / sampling frequency)
+            n_samples (int): Number of samples in the impulse response
+
+        Returns:
+            Tensor: a time-sampled impulse response perceived at position p from a (virtual or real) source s
+        """
+
+        def _delta_lp(x):
+            mask = x.abs() < tw / 2
+            out = torch.zeros_like(x)
+            if mask.any():
+                t = x[mask]
+                out[mask] = 0.5 * (1 + torch.cos(2 * torch.pi / tw * t)) * torch.sinc(t)
+            return out
+
+        d = s.distance_to(p)
+
+        def _get_rel_idx(_float_idx):
+            idx = torch.round(_float_idx)
+            return idx - delay_idx_float
+
+        window_radius = tw // 2
+
+        delay_idx_float = d / (speed_of_sound * dt)
+        delay_idx_error = _get_rel_idx(delay_idx_float)
+
+        # This is a more effficient way to compute the impulse response of a big number of sources.
+        # Computing the impulse response for each source separately is not efficient because most of the
+        # samples are evaluated to 0 and it requires instantiating n_sources tensors of size n_samples.
+        # Instead, we build the impulse response as a sequence of histograms, each of which contains
+        # n_samples bins and the bins match the time indices of the output. The data accumulated in these
+        # histograms is "pieces" of each individual impulse response, each of which calculcated for a integer
+        # time delay n in [-window_radius, window_radius]. That way, we only compute n_window_samples histograms
+        # instead of n_sources histograms, which normally n_window_samples << n_sources.
+
+        h = torchist.histogram(
+            delay_idx_float,
+            bins=n_samples,
+            low=0,
+            upp=n_samples,
+            weights=s.intensity / (4 * torch.pi * d) * _delta_lp(delay_idx_error),
+        )
+
+        for _ in range(window_radius):
+            for n in (-_, _):
+                h += torchist.histogram(
+                    delay_idx_float + n,
+                    bins=n_samples,
+                    low=0,
+                    upp=n_samples,
+                    weights=s.intensity
+                    / (4 * torch.pi * d)
+                    * _delta_lp(delay_idx_error + n),
+                )
+
+        return h
 
 
 class Patch:
@@ -26,69 +137,60 @@ class Patch:
     \in 2^{\mathbb{R}^3}$.
 
     Args:
-        vertices: tensor with shape $(..., n, 3)$ where $n$ is the number of points defining the patch $P$
+        vertices: tensor with shape $(..., 3, n)$ where $n$ is the number of points defining the patch $P$. Requires $n>3$
         reflection_coeff: tensor with shape $(...)$ defining the reflectivity coefficient of the patch.
     """
 
     _vertices: Tensor
-    _reflection_coeff: Tensor = None
-    _origin: Tensor = None
-    _rel_vertices: Tensor = None
-    _is_planar: bool = None
-    _is_convex: bool = None
-    _matrix_plane: Tensor = None
-    _normal_plane: Tensor = None
+    _reflection_coeff: Tensor | float
+    _rel_vertices: Tensor
+    _is_planar: Tensor
+    _is_convex: Tensor
+    _normal_vector: Tensor
 
     __oom_retry_count: int = 0
 
     def __init__(
         self,
         vertices: Tensor,
-        reflection_coeff: Optional[Tensor | float] = None,
+        reflection_coeff: Tensor | float = 0.5,
     ):
-        for obj in vertices:
-            if obj.shape[-1] != 3:
-                raise ValueError(
-                    f"Expected tensors of shape (..., 3,), got {obj.shape}"
-                )
-        self._vertices = (
-            torch.tensor(vertices).unsqueeze(0) if vertices.ndim == 2 else vertices
-        )
-
-        self._reflection_coeff = reflection_coeff
-        if self._reflection_coeff is None:
-            self._reflection_coeff = torch.full_like(vertices[..., 0, 0], 0.5)
-        if isinstance(self._reflection_coeff, float):
-            self._reflection_coeff = torch.full_like(
-                vertices[..., 0, 0], self._reflection_coeff
+        if vertices.shape[-2] != 3:
+            raise ValueError(
+                f"Expected tensors of shape (..., 3, n), got {vertices.shape}"
+            )
+        if vertices.shape[-1] < 3:
+            raise ValueError(
+                f"Expected tensors of shape (..., 3, n) with n >= 3, got {vertices.shape}"
             )
 
+        if isinstance(reflection_coeff, float):
+            reflection_coeff = torch.full_like(vertices[..., 0, 0], reflection_coeff)
+
+        self._reflection_coeff = reflection_coeff
+        self._vertices = vertices
+
         # Set inner propertiesPatch
-        self._origin = _as_tensor(self._vertices[:, :1])
-        self._rel_vertices = _as_tensor(self._vertices) - self._origin
+        self._rel_vertices = _as_tensor(self._vertices) - self.origin
 
         self._is_planar = matrix_rank(self._rel_vertices) == 2
 
-        def _if_planar(x: Tensor, other=torch.nan) -> Tensor:
-            return torch.where(
-                self.is_planar.view(-1, *((1,) * (x.ndim - 1))), x, other
+        if not torch.all(self._is_planar):
+            raise NotImplementedError(
+                "Non-planar patch detected, only planar patches are currently supported."
             )
+        self._is_convex = self._is_planar  # all planar patches are convex
 
-        self._matrix_plane = _if_planar(
-            (self._vertices[:, 1:3].clone().detach() - self._origin)
+        v1, v2, *_ = torch.split(
+            (self._vertices[..., :, 1:3] - self.origin),
+            1,
+            dim=-1,
         )
-        self._normal_plane = _if_planar(
-            torch.linalg.cross(*self._matrix_plane.moveaxis(1, 0))
-        ).unsqueeze(1)
-        self._normal_plane /= self._normal_plane.norm(dim=-1, keepdim=True)
-
-        # Try to define if is convex
-        self._is_convex = _if_planar(torch.tensor(torch.nan), False)
-        if self._vertices.shape[1] <= 3:
-            self._is_convex[:] = True
+        normal_vector = _cross_movedim(v1, v2, (-1, -2))
+        self._normal_vector = normal_vector / normal_vector.norm(dim=-2, keepdim=True)
 
     @property
-    def is_planar(self) -> BoolTensor:
+    def is_planar(self) -> Tensor:
         return self._is_planar
 
     @property
@@ -101,23 +203,26 @@ class Patch:
 
     @property
     def origin(self):
-        return self._origin
+        return self._vertices[..., :, :1]
 
     @property
-    def normal_plane(self):
+    def normal_vector(self):
         if self.is_planar.all():
-            return self._normal_plane
+            return self._normal_vector
         raise ValueError("Non-planar patch has no normal")
 
-    def contains(self, arg: Any) -> Tuple[BoolTensor, Tensor]:
+    def contains(self, arg: Any) -> Tensor:
         """Check if a point is contained in the patch."""
-        if self.is_convex.all():
+        if torch.all(self.is_convex):
             return self._convex_contains(*arg)
         raise NotImplementedError()
 
     def _convex_contains(
-        self, p: Tensor, mask: BoolTensor = None, atol: float = 1e-4
-    ) -> BoolTensor:
+        self,
+        p: Tensor,
+        mask: Optional[Tensor] = None,
+        atol: float = 1e-4,
+    ) -> Tensor:
         """Tests if a point p is inside a convex 3D polygon (self) by computing the winding number.
 
         See https://en.wikipedia.org/wiki/Point_in_polygon
@@ -131,33 +236,33 @@ class Patch:
             bool: true iff p in self
         """
         rel_vertices = self._rel_vertices
-        origin = self._origin
+        origin = self.origin
         if mask is not None:
             if not mask.any():
-                return False
+                return torch.full_like(mask, False, dtype=torch.bool)
             p = p[mask]
-            rel_vertices = rel_vertices[... if rel_vertices.shape[0] == 1 else mask]
-            origin = origin[... if rel_vertices.shape[0] == 1 else mask]
+            rel_vertices = rel_vertices[mask]
+            origin = origin[mask]
 
         def _circle_pairwise(x: Tensor):
-            x = x.moveaxis(1, 0)
+            x = rearrange(x, "... d n -> n ... d 1")
             return zip(x, (*x[1:], x[0]))
 
         # Inside outside problem, solution 4: https://www.eecs.umich.edu/courses/eecs380/HANDOUTS/PROJ2/InsidePoly.html
         angle = torch.zeros(1, device=p.device)
 
         for v0, v1 in _circle_pairwise(rel_vertices - p + origin):
-            m0, m1 = v0.norm(dim=1), v1.norm(dim=1)  # p is numerically at a vertex
+            m0, m1 = v0.norm(dim=-2), v1.norm(dim=-2)  # p is numerically at a vertex
             at_vertex = torch.isclose(
                 den := m0 * m1, torch.zeros(1, device=den.device), atol=atol
             )
-            angle = angle + torch.acos((v1 * v0).sum(dim=1) / den)
+            angle = angle + torch.acos((v1 * v0).sum(dim=-2) / den)
             angle[at_vertex] = 2 * torch.pi
-        return angle >= (2 * torch.pi - atol)
+        return angle[..., 0] >= (2 * torch.pi - atol)
 
     def mirror(
         self, s: Source, force_product: bool = False, if_inside: bool = False
-    ) -> Source:
+    ) -> Source | Iterable[Source]:
         """Mirror a point p through the plane of self
 
         Args:
@@ -192,36 +297,31 @@ class Patch:
     ) -> Source:
         p = s.p
         intensity = -s.intensity
-        if p.ndim == 1:
-            p = p.unsqueeze(0)
-        if p.ndim == 2:
-            p = p.unsqueeze(1)
-        if (
-            p.shape[-3] != 1
-            and (p.shape[-3] != self._origin.shape[-3] or force_product)
-        ):  # forces cartesian product of sources and patches by expanding a dimension, if needed
-            p = p.unsqueeze(-3)
-            intensity = intensity.unsqueeze(-1)
-        p = p - self._origin
-        inner_product_p_normal = dot(p, self.normal_plane, keepdim=True)
+        reflection_coeff = self._reflection_coeff
+        if force_product:  # forces cartesian product of sources and patches by expanding a dimension, if needed
+            for _ in range(self.origin.ndim - 2):
+                p = p.unsqueeze(-3)
+                intensity = intensity.unsqueeze(-1)
+        p = p - self.origin
+        inner_product_p_normal = dot(p, self.normal_vector, keepdim=True)
 
-        valid = (inner_product_p_normal >= 0)[..., 0] if if_inside else ...
+        valid = (inner_product_p_normal >= 0)[..., 0, 0] if if_inside else ...
         # I tried using masked tensors here but it didn't help
         # p = torch.masked.masked_tensor(p, valid.expand_as(p))
         # inner_product_p_normal = torch.masked.masked_tensor(inner_product_p_normal, valid.expand_as(inner_product_p_normal))
 
         new_positions = (
-            self._origin + p - 2 * inner_product_p_normal * self.normal_plane
+            self.origin + p - 2 * inner_product_p_normal * self.normal_vector
         )[valid]
-        new_intensities = (intensity * self._reflection_coeff).unsqueeze(-1)[valid]
+        new_intensities = (intensity * reflection_coeff)[..., valid]
         # if torch.masked.is_masked_tensor(new_positions):
         #     new_positions = new_positions.get_data()[new_positions.get_mask()[..., 0]]
         return Source(new_positions, new_intensities)
 
     def turn_normal_towards(self, point: Tensor):
         """If necessary, flips the normal of the plane towards a point."""
-        self._normal_plane *= dot(
-            self._normal_plane, point - self._origin, keepdim=True
+        self._normal_vector *= dot(
+            self._normal_vector, point - self.origin, keepdim=True
         ).sign()
 
     def can_see(self, other: "Patch") -> bool:
@@ -300,11 +400,13 @@ class ConvexRoom(Room):
         if isinstance(next(iter(points)), Tensor):
             points = points.detach()
             device = points.device
-        self._convex_hull = scipy.spatial.ConvexHull(points.detach().cpu())
+        self._convex_hull = scipy.spatial.ConvexHull(points.detach().cpu().T)
         self._points = torch.tensor(
-            self._convex_hull.points, device=device, dtype=points.dtype
+            self._convex_hull.points.T, device=device, dtype=points.dtype
         )
-        self._facets = self._points[self._convex_hull.simplices]
+        self._facets = rearrange(
+            self._points[:, self._convex_hull.simplices.T], "... v t -> t v ..."
+        )
         self._walls = Patch(self._facets, reflection_coeff=reflection_coeff)
         self._force_walls_normal_to_point_inwards()
 
@@ -320,7 +422,7 @@ class ConvexRoom(Room):
 
     def _force_walls_normal_to_point_inwards(self) -> None:
         # centroid of points is a inner_point
-        inner_point = self.points.sum(dim=-2) / self.points.shape[-2]
+        inner_point = self.points.sum(dim=-1, keepdim=True) / self.points.shape[-1]
         if isinstance(self.walls, Patch):
             self._walls.turn_normal_towards(inner_point)
             return
@@ -379,14 +481,15 @@ class ConvexRoom(Room):
         k: int,
         t_final: float = 2.0,
         fs: float = 10000.0,
-        impulse_response: ImpulseResponseMethod = None,
+        impulse_response_fn: ImpulseResponseMethod = ImpulseResponseStrategies.sinc,
     ) -> tuple[Tensor, Tensor]:
-        impulse_response = impulse_response or ImpulseResponseStrategies.sinc
+        if p.shape[-1] == 3:
+            p.unsqueeze(-1)
 
         n_samples = int(t_final * fs)
         dt = 1 / fs
 
-        h = impulse_response(p, s, dt, n_samples)
+        impulse_response = impulse_response_fn(p, s, dt, n_samples)
 
         # For efficiency, compute_reflected_sources is a generator
         s_list = deque([s])
@@ -399,87 +502,16 @@ class ConvexRoom(Room):
                     print(
                         f"Reflection {_}, adding {s.intensity.nelement()} impulse responses..."
                     )
-                    h += impulse_response(p, s, dt, n_samples)
+                    impulse_response += impulse_response_fn(p, s, dt, n_samples)
                     if _ <= k - 1:
                         s_list.appendleft(s)
 
-        return h.cpu(), torch.arange(len(h), device="cpu") * dt
-
-
-class ImpulseResponseStrategies:
-    """A class containing strategies to build an impulse response."""
-
-    @staticmethod
-    def histogram(
-        p: Tensor, s: Source, dt: float, n_samples: int, speed_of_sound: float = 343.0
-    ) -> Tensor:
-        d = s.distance_to(p)
-        return torchist.histogram(
-            d / speed_of_sound / dt,
-            bins=n_samples,
-            low=0,
-            upp=n_samples,
-            weights=s.intensity / (4 * torch.pi * d),
+        impulse_response = butterworth_filter_conv(
+            impulse_response, cutoff_hz=20.0, fs=fs
         )
-
-    @staticmethod
-    def sinc(
-        p: Tensor,
-        s: Source,
-        dt: float,
-        n_samples: int,
-        speed_of_sound: float = 343.0,
-        tw: int = 20,
-    ) -> Tensor:
-        """Method described in https://arxiv.org/pdf/1710.04196
-
-        Args:
-            p (Tensor): _description_
-            s (Source): _description_
-            dt (float): _description_
-            n_samples (int): _description_
-
-        Returns:
-            Tensor: _description_
-        """
-
-        def _delta_lp(x):
-            mask = x.abs() < tw / 2
-            out = torch.zeros_like(x)
-            if mask.any():
-                t = x[mask]
-                out[mask] = 0.5 * (1 + torch.cos(2 * torch.pi / tw * t)) * torch.sinc(t)
-            return out
-
-        d = s.distance_to(p)
-
-        def _get_rel_idx(_float_idx):
-            idx = torch.round(_float_idx)
-            return idx - float_idx
-
-        window_radius = tw // 2
-
-        float_idx = d / (speed_of_sound * dt)
-        rel_idx = _get_rel_idx(float_idx)
-        h = torchist.histogram(
-            float_idx,
-            bins=n_samples,
-            low=0,
-            upp=n_samples,
-            weights=s.intensity / (4 * torch.pi * d) * _delta_lp(rel_idx),
-        )
-
-        for _ in range(window_radius):
-            for m in (-_, _):
-                h += torchist.histogram(
-                    float_idx + m,
-                    bins=n_samples,
-                    low=0,
-                    upp=n_samples,
-                    weights=s.intensity / (4 * torch.pi * d) * _delta_lp(rel_idx + m),
-                )
-
-        return h
+        return impulse_response.cpu(), torch.arange(
+            len(impulse_response), device="cpu"
+        ) * dt
 
 
 class Ray:
@@ -487,50 +519,64 @@ class Ray:
 
 
     Args:
-        direction: vector defining the direction towards which the ray is shot.
-        origin: point defining the origin of the ray. Defaults to $0$.
+        direction: tensor of shape $(..., 3, 1)$ defining directions towards which the rays are shot.
+        origin: optional tensor of shape $(..., 3, 1)$ defining the origin of the rays. Defaults to $0$.
 
     """
 
     def __init__(self, direction: Tensor, origin: Tensor = None) -> None:
-        if direction.ndim == 2:
-            direction = direction.unsqueeze(1)
+        if direction.ndim == 1:
+            direction = direction.unsqueeze(-1)
         if origin is None:
             origin = torch.zeros_like(direction)
-        elif origin.ndim == 2:
-            origin = origin.unsqueeze(1)
+        if direction.shape[-2:] != (3, 1):
+            raise ValueError(
+                f"Expected shape (..., 3, 1) for direction, got {direction.shape}"
+            )
+        if origin.shape != direction.shape:
+            raise ValueError(
+                f"direction and origin must have the same shape, got {direction.shape} and {origin.shape}"
+            )
         if (norm_direction := direction.norm()) == 0:
             raise ValueError("Null direction: Degenerated ray instantiated")
         self.origin = origin
         self.direction = direction / norm_direction
 
     # @torch.compile
-    def intersects(self, patch: Patch) -> Tuple[BoolTensor, Tensor]:
+    def intersects(self, patch: Patch) -> Tuple[Tensor, Tensor]:
         if torch.all(patch.is_planar):
             return self._intersects_planar_patch(patch)
         raise NotImplementedError("Ray.intersects() only supports planar patches")
 
     def _intersects_planar_patch(
         self, patch: Patch, two_sided_ray: bool = False
-    ) -> Tuple[BoolTensor, Tensor]:
+    ) -> Tuple[Tensor, Tensor]:
         # Ray plane intersection: https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-plane-and-ray-disk-intersection.html  # noqa: E501
         # Computes t such that the ray intersects the plane generated by the patch at p = origin + t * direction
-        t = -dot(self.origin - patch.origin, patch.normal_plane, keepdim=True) / dot(
-            self.direction, patch.normal_plane, keepdim=True
+        t = -dot(
+            self.origin - patch.origin,
+            patch.normal_vector,
+            keepdim=True,
+        ) / dot(
+            self.direction,
+            patch.normal_vector,
+            keepdim=True,
         )
 
         if not two_sided_ray:  # t < 0  and one sided ray => missed it
             sure_missed = (t < 0)[..., 0, 0]
         else:
-            sure_missed = torch.full(t.shape[:1], False, dtype=torch.bool)
+            sure_missed = torch.full(t.shape[..., 0, 0], False, dtype=torch.bool)
 
-        tbd = ~sure_missed
-        p = torch.zeros(t.shape[:-1] + (3,), device=t.device)
+        undecided = ~sure_missed
+        p = torch.zeros(t.shape[:-2] + (3, 1), device=t.device)
 
-        p[tbd, :] = (self.origin + t * self.direction)[tbd]  # intersection points p
+        p[undecided, ...] = (self.origin + t * self.direction)[
+            undecided, ...
+        ]  # intersection points p
         #  Check if point inside poly patch
-        tbd[tbd.clone()] *= patch.contains((p, tbd))
-        return tbd, p
+        undecided[undecided.clone()] *= patch.contains((p, undecided))
+        return undecided, p
 
 
 def dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
@@ -545,11 +591,13 @@ def dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
     Returns:
         dot product $\langle x, y\rangle = {x^\top y}$
     """
-    # return (x * y).sum(dim=-1, keepdim=keepdim)
-    # res = torch.linalg.vecdot(x, y, dim=-1)
-    res = torch.einsum("...i,...i", x, y)
+
+    trailing = "t" if x.shape[-1] == 1 else ""  # is a column vector
+    input_shape = f"... i {trailing}"
+    output_shape = f"... {trailing}"
+    res = einsum(x, y, f"{input_shape}, {input_shape} -> {output_shape}")
     if keepdim:
-        res.unsqueeze_(-1)
+        res = rearrange(res, f"... {trailing} -> ... 1 {trailing}")
     return res
 
 
@@ -557,3 +605,54 @@ def _as_tensor(x: Any) -> Tensor:
     if isinstance(x, Tensor):
         return x
     return torch.tensor(x)
+
+
+def _cross_movedim(v1: Tensor, v2: Tensor, moveaxis_arg: Tuple[int, int]):
+    return torch.linalg.cross(
+        v1.moveaxis(*moveaxis_arg),
+        v2.moveaxis(*moveaxis_arg),
+    ).moveaxis(*reversed(moveaxis_arg))
+
+
+def butterworth_filter_conv(
+    signal: torch.Tensor, cutoff_hz: float, fs: float, order: int = 4, ir_len: int = 512
+) -> torch.Tensor:
+    """
+    Filters a 1D signal using a Butterworth low-pass filter via convolution with the impulse response.
+
+    Args:
+        signal (torch.Tensor): Input 1D signal.
+        cutoff_hz (float): Cutoff frequency in Hz.
+        fs (float): Sampling frequency in Hz.
+        order (int): Filter order.
+        ir_len (int): Length of the impulse response used for convolution.
+
+    Returns:
+        torch.Tensor: Filtered signal.
+    """
+    if signal.ndim != 1:
+        raise ValueError("Input signal must be 1D")
+
+    # Design digital Butterworth filter (high-pass)
+    b, a = scipy.signal.butter(
+        order, cutoff_hz / (0.5 * fs), btype="high", analog=False
+    )
+
+    # Generate impulse response
+    impulse = np.zeros(ir_len)
+    impulse[0] = 1.0  # delta function
+    h = scipy.signal.lfilter(
+        b, a, impulse
+    )  # filter the impulse to get the impulse response
+
+    # Convert impulse response to torch tensor
+    h_torch = torch.tensor(h, dtype=signal.dtype, device=signal.device)
+
+    # Apply convolution (same length output as input)
+    filtered = torch.nn.functional.conv1d(
+        signal.view(1, 1, -1),  # shape (N) -> (1, 1, N)
+        h_torch.view(1, 1, -1),  # shape (F) -> (1, 1, F)
+        padding=ir_len // 2,
+    ).view(-1)  # shape back to (N,)
+
+    return filtered

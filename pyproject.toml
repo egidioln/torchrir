@@ -6,7 +6,7 @@ description = "TorchRIR is a library for simulating Room Impulse Responses writt
 
 
 requires-python = ">=3.9"
-dependencies = ["einops", "scipy", "torch", "torchist"]
+dependencies = ["einops", "scipy", "torch", "torchaudio", "torchist"]
 
 
 [dependency-groups]

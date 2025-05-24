@@ -1,14 +1,14 @@
 """Geometry module"""
 
 from collections import deque
-from typing import Any, Callable, Iterable, List, Optional, Protocol, Tuple
+from typing import Any, Iterable, List, Optional, Protocol, Tuple
 from warnings import warn
 
 import numpy as np
 import scipy
 from einops import einsum, rearrange
 import torch
-from torch import Tensor, Tensor
+from torch import Tensor
 from torch.linalg import matrix_rank
 
 from numpy.typing import NDArray
@@ -38,7 +38,7 @@ class ImpulseResponseMethod(Protocol):
         dt: float,
         n_samples: int,
         speed_of_sound: float = 343.0,
-        tw: int = 20,
+        tw: int = 200,
     ) -> Tensor: ...
 
 
@@ -330,13 +330,13 @@ class Patch:
             return self._convex_can_see(other)
         return NotImplementedError("Method not implemented for non-convex patches.")
 
-    def _convex_can_see(self, other: "Patch"):
+    def _convex_can_see(self, other: "Patch") -> bool:
         """Checks if this convex patch can see the other one.
 
         Convex Patch A can see the convex patch B if and only if
 
         """
-        pass
+        return NotImplementedError("Method not implemented patches.")
 
 
 class Room:

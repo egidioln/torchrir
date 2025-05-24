@@ -37,8 +37,8 @@ class ImpulseResponseMethod(Protocol):
         s: Source,
         dt: float,
         n_samples: int,
-        speed_of_sound: float = 343.0,
-        tw: int = 200,
+        speed_of_sound: float,
+        tw: int,
     ) -> Tensor: ...
 
 
@@ -65,7 +65,7 @@ class ImpulseResponseStrategies:
         dt: float,
         n_samples: int,
         speed_of_sound: float = 343.0,
-        tw: int = 20,
+        tw: int = 200,
     ) -> Tensor:
         """Method described in https://arxiv.org/pdf/1710.04196
 
@@ -507,7 +507,7 @@ class ConvexRoom(Room):
                         s_list.appendleft(s)
 
         impulse_response = butterworth_filter_conv(
-            impulse_response, cutoff_hz=20.0, fs=fs
+            impulse_response, cutoff_hz=20.0, fs=fs, ir_len=len(impulse_response) // 10
         )
         return impulse_response.cpu(), torch.arange(
             len(impulse_response), device="cpu"
@@ -634,9 +634,7 @@ def butterworth_filter_conv(
         raise ValueError("Input signal must be 1D")
 
     # Design digital Butterworth filter (high-pass)
-    b, a = scipy.signal.butter(
-        order, cutoff_hz / (0.5 * fs), btype="high", analog=False
-    )
+    b, a = scipy.signal.butter(order, cutoff_hz, btype="highpass", analog=False, fs=fs)
 
     # Generate impulse response
     impulse = np.zeros(ir_len)

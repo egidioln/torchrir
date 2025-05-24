@@ -18,11 +18,12 @@ class Source:
         if position.ndim == 1:
             position = position.unsqueeze(1)
         self.position = position
-        self.intensity = (
-            torch.tensor(intensity)
-            if intensity is not None
-            else torch.ones_like(position[..., 0, 0])
-        )
+
+        if intensity is None:
+            intensity = torch.ones_like(position[..., 0, 0])
+        if not isinstance(intensity, torch.Tensor):
+            intensity = torch.tensor(intensity, dtype=position.dtype)
+        self.intensity = intensity
 
     @property
     def p(self) -> torch.Tensor:

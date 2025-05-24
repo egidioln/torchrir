@@ -12,7 +12,7 @@ from torch.linalg import matrix_rank
 
 from numpy.typing import NDArray
 import torchist
-from torchaudio.functional import filtfilt
+from torchaudio.functional import highpass_biquad
 from torchaudio.functional.filtering import bandpass_biquad
 
 from torchrir.source import Source
@@ -530,12 +530,12 @@ class ConvexRoom(Room):
                     if _ <= k - 1:
                         s_list.appendleft(s)
 
-        impulse_response = butterworth_filter_conv(
+        impulse_response = highpass_filtering(
             impulse_response,
             cutoff_hz=20.0,
             fs=fs,
             ir_len=len(impulse_response) // 10,
-            order=6,
+            order=4,
         )
         return impulse_response.cpu(), torch.arange(
             len(impulse_response), device="cpu"
@@ -642,7 +642,7 @@ def _cross_movedim(v1: Tensor, v2: Tensor, moveaxis_arg: Tuple[int, int]):
     ).moveaxis(*reversed(moveaxis_arg))
 
 
-def butterworth_filter_conv(
+def highpass_filtering(
     signal: torch.Tensor, cutoff_hz: float, fs: float, order: int = 4, ir_len: int = 512
 ) -> torch.Tensor:
     """
@@ -661,8 +661,10 @@ def butterworth_filter_conv(
     if signal.ndim != 1:
         raise ValueError("Input signal must be 1D")
 
-    # Design digital Butterworth filter (high-pass)
-    b, a = scipy.signal.butter(order, cutoff_hz, btype="highpass", analog=False, fs=fs)
-
-    filtered = filtfilt(signal, a, b)
+    filtered = highpass_biquad(
+        signal,
+        sample_rate=int(fs),
+        cutoff_freq=cutoff_hz,
+        Q=0.99,
+    )
     return filtered

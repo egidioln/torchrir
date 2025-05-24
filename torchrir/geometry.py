@@ -13,7 +13,6 @@ from torch.linalg import matrix_rank
 from numpy.typing import NDArray
 import torchist
 from torchaudio.functional import highpass_biquad
-from torchaudio.functional.filtering import bandpass_biquad
 
 from torchrir.source import Source
 

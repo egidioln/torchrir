@@ -4,7 +4,6 @@ from collections import deque
 from typing import Any, Iterable, List, Optional, Protocol, Tuple
 from warnings import warn
 
-import numpy as np
 import scipy
 from einops import einsum, rearrange
 import torch
@@ -13,7 +12,8 @@ from torch.linalg import matrix_rank
 
 from numpy.typing import NDArray
 import torchist
-
+from torchaudio.functional import filtfilt
+from torchaudio.functional.filtering import bandpass_biquad
 
 from torchrir.source import Source
 
@@ -341,8 +341,8 @@ class Patch:
     def plot(
         self,
         *args,
-        fig: Optional["matplotlib.pyplot.Figure"] = None,
-        ax: Optional["matplotlib.pyplot.Axes"] = None,
+        fig: Optional["matplotlib.pyplot.Figure"] = None,  # noqa: F821
+        ax: Optional["matplotlib.pyplot.Axes"] = None,  # noqa: F821
         **kwargs,
     ):
         """Plots the patch as a 3D polygon."""
@@ -531,7 +531,11 @@ class ConvexRoom(Room):
                         s_list.appendleft(s)
 
         impulse_response = butterworth_filter_conv(
-            impulse_response, cutoff_hz=20.0, fs=fs, ir_len=len(impulse_response) // 10
+            impulse_response,
+            cutoff_hz=20.0,
+            fs=fs,
+            ir_len=len(impulse_response) // 10,
+            order=6,
         )
         return impulse_response.cpu(), torch.arange(
             len(impulse_response), device="cpu"
@@ -660,21 +664,5 @@ def butterworth_filter_conv(
     # Design digital Butterworth filter (high-pass)
     b, a = scipy.signal.butter(order, cutoff_hz, btype="highpass", analog=False, fs=fs)
 
-    # Generate impulse response
-    impulse = np.zeros(ir_len)
-    impulse[0] = 1.0  # delta function
-    h = scipy.signal.lfilter(
-        b, a, impulse
-    )  # filter the impulse to get the impulse response
-
-    # Convert impulse response to torch tensor
-    h_torch = torch.tensor(h, dtype=signal.dtype, device=signal.device)
-
-    # Apply convolution (same length output as input)
-    filtered = torch.nn.functional.conv1d(
-        signal.view(1, 1, -1),  # shape (N) -> (1, 1, N)
-        h_torch.view(1, 1, -1),  # shape (F) -> (1, 1, F)
-        padding=ir_len // 2,
-    ).view(-1)  # shape back to (N,)
-
+    filtered = filtfilt(signal, a, b)
     return filtered

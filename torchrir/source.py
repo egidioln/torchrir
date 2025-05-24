@@ -1,7 +1,11 @@
 """Source Module"""
 
-from typing import Iterable, Optional, Self
+from typing import Iterable, Optional, Self, TYPE_CHECKING
 import torch
+
+
+if TYPE_CHECKING:
+    from torchrir.geometry import Patch
 
 
 class Source:
@@ -11,9 +15,17 @@ class Source:
     """A 3D vector $p$ defining position of the point source"""
     intensity: torch.Tensor
     """A real number defining its intensity (in Watts)"""
+    root_patch_indices: Optional[torch.Tensor]
+    """For each virtual source, the index of the patch that was used to create its oldest virtual ancestor."""
+    root_patch: Optional["Patch"]
+    """The patch that was used to create the oldest virtual ancestor of this source."""
 
     def __init__(
-        self, position: torch.Tensor, intensity: Optional[torch.Tensor] = None
+        self,
+        position: torch.Tensor,
+        intensity: Optional[torch.Tensor] = None,
+        root_patch_indices: Optional[torch.Tensor] = None,
+        root_patch: Optional["Patch"] = None,
     ) -> None:
         if position.ndim == 1:
             position = position.unsqueeze(1)
@@ -24,6 +36,9 @@ class Source:
         if not isinstance(intensity, torch.Tensor):
             intensity = torch.tensor(intensity, dtype=position.dtype)
         self.intensity = intensity
+
+        self.root_patch_indices = root_patch_indices
+        self.root_patch = root_patch
 
     @property
     def p(self) -> torch.Tensor:
@@ -63,3 +78,29 @@ class Source:
     def chunk(self, n_chunks: int) -> Iterable["Source"]:
         for p, i in zip(self.position.chunk(n_chunks), self.intensity.chunk(n_chunks)):
             yield Source(p, i)
+
+    def can_see(self, p: torch.Tensor) -> "Source":
+        """Checks if source can see a point $p\in\mathbb{R}^3 through it's parent patch$.
+
+        Args:
+            p: point $p\in\mathbb{R}^3$
+
+        Returns:
+            A boolean tensor indicating whether source can see the point $p$.
+        """
+        from torchrir.geometry import Ray
+
+        if p.ndim == 1:
+            p = p.unsqueeze(1)
+
+        if self.root_patch_indices is None:
+            return self
+        direction = (_ := p - self.position) / torch.norm(_, dim=-2, keepdim=True)
+        ray = Ray(direction, self.position)
+        idx, _ = ray.intersects(self.root_patch[self.root_patch_indices])
+        return Source(
+            position=self.position[idx],
+            intensity=self.intensity[idx],
+            root_patch_indices=self.root_patch_indices[idx],
+            root_patch=self.root_patch,
+        )

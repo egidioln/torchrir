@@ -1,7 +1,6 @@
 from itertools import product
 import time
 from typing import Iterable
-from warnings import warn
 from torchrir.geometry import ConvexRoom, ImpulseResponseStrategies, Patch, Ray
 import torch
 import pytest
@@ -165,7 +164,7 @@ def test_convexroom_rir_hist():
     ).T
     room: ConvexRoom = ConvexRoom(points, reflection_coeff=0.1)
     source = Source(
-        torch.zeros(3), intensity=torch.ones(1, dtype=room_geometry.dtype) * 5
+        torch.zeros(3), intensity=torch.tensor(5, dtype=room_geometry.dtype)
     )
 
     p = torch.tensor([[2], [2], [0.8]], dtype=room_geometry.dtype)
@@ -176,10 +175,10 @@ def test_convexroom_rir_hist():
     )
     _ = time.perf_counter_ns() - t0  # dt
     # warn(_ / 1e9)
-    assert torch.isclose(rir.sum(), torch.tensor(0.0), atol=1e-3), (
+    assert torch.isclose(rir.mean(), torch.tensor(0.0), atol=1e-5), (
         "RIR mean should be zero "
     )
-    assert torch.isclose(rir.norm(), torch.tensor(0.1431), atol=1e-3), (
+    assert torch.isclose(rir.norm(), torch.tensor(0.1353), atol=1e-3), (
         "RIR norm shouldd doesn't match expected value"
     )
 
@@ -191,7 +190,7 @@ def test_convexroom_rir_sinc():
     ).T
     room: ConvexRoom = ConvexRoom(points, reflection_coeff=0.1)
     source = Source(
-        torch.zeros(3), intensity=torch.ones(1, dtype=room_geometry.dtype) * 5
+        torch.zeros(3), intensity=torch.tensor(5, dtype=room_geometry.dtype)
     )
 
     p = torch.tensor([2, 2, 0.8], dtype=room_geometry.dtype)
@@ -200,12 +199,12 @@ def test_convexroom_rir_sinc():
     rir, t = room.compute_rir(
         p, source, k=7, impulse_response_fn=ImpulseResponseStrategies.sinc
     )
-    dt = time.perf_counter_ns() - t0
-    warn(dt / 1e9)
-    assert torch.isclose(rir.sum(), torch.tensor(0.0), atol=1e-3), (
+    _ = time.perf_counter_ns() - t0
+    # warn(dt / 1e9)
+    assert torch.isclose(rir.mean(), torch.tensor(0.0), atol=1e-5), (
         "RIR mean should be zero"
     )
-    assert torch.isclose(rir.norm(), torch.tensor(0.3595), atol=1e-3), (
+    assert torch.isclose(rir.norm(), torch.tensor(0.3439), atol=1e-3), (
         "RIR norm shouldd doesn't match expected value"
     )
 

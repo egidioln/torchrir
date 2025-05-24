@@ -1,6 +1,7 @@
 """Geometry module"""
 
 from collections import deque
+import math
 from typing import Any, Iterable, List, Optional, Protocol, Tuple
 from warnings import warn
 
@@ -12,7 +13,7 @@ from torch.linalg import matrix_rank
 
 from numpy.typing import NDArray
 import torchist
-from torchaudio.functional import highpass_biquad
+from torchaudio.functional import filtfilt
 
 from torchrir.source import Source
 
@@ -188,6 +189,11 @@ class Patch:
         normal_vector = _cross_movedim(v1, v2, (-1, -2))
         self._normal_vector = normal_vector / normal_vector.norm(dim=-2, keepdim=True)
 
+    def __getitem__(self, item: int | slice) -> "Patch":
+        """Returns a new Patch with the same properties but with a subset of vertices."""
+        reflection_coeff = self._reflection_coeff
+        return Patch(self._vertices[item, :], reflection_coeff[..., item])
+
     @property
     def is_planar(self) -> Tensor:
         return self._is_planar
@@ -294,6 +300,11 @@ class Patch:
     def _mirror(
         self, s: Source, force_product: bool = False, if_valid: bool = False
     ) -> Source:
+        root_patch_indices = s.root_patch_indices
+        root_patch = s.root_patch or self
+        if root_patch_indices is None:
+            root_patch_indices = _get_root_patch_indices(s)
+
         p = s.p
         intensity = -s.intensity
         reflection_coeff = self._reflection_coeff
@@ -301,21 +312,27 @@ class Patch:
             for _ in range(self.origin.ndim - 2):
                 p = p.unsqueeze(-3)
                 intensity = intensity.unsqueeze(-1)
+                root_patch_indices.unsqueeze_(-1)
         p = p - self.origin
         inner_product_p_normal = dot(p, self.normal_vector, keepdim=True)
 
+        # validity test checks if the source is in the same half-space as the normal vector
+        # (i.e., it's being reflected on an inner surface of the the room)
         valid = (inner_product_p_normal >= 0)[..., 0, 0] if if_valid else ...
-        # I tried using masked tensors here but it didn't help
-        # p = torch.masked.masked_tensor(p, valid.expand_as(p))
-        # inner_product_p_normal = torch.masked.masked_tensor(inner_product_p_normal, valid.expand_as(inner_product_p_normal))
 
         new_positions = (
             self.origin + p - 2 * inner_product_p_normal * self.normal_vector
         )[valid]
         new_intensities = (intensity * reflection_coeff)[..., valid]
-        # if torch.masked.is_masked_tensor(new_positions):
-        #     new_positions = new_positions.get_data()[new_positions.get_mask()[..., 0]]
-        return Source(new_positions, new_intensities)
+        shape = torch.broadcast_shapes(root_patch_indices.shape, reflection_coeff.shape)
+        new_root_patch_indices = root_patch_indices.broadcast_to(shape)[valid]
+
+        return Source(
+            new_positions,
+            new_intensities,
+            root_patch_indices=new_root_patch_indices,
+            root_patch=root_patch,
+        )
 
     def turn_normal_towards(self, point: Tensor):
         """If necessary, flips the normal of the plane towards a point."""
@@ -360,6 +377,18 @@ class Patch:
         ax.set_ylabel("Y")
         ax.set_zlabel("Z")
         return fig, ax
+
+
+def _get_root_patch_indices(s: Source) -> Tensor:
+    if s.p.ndim == 2:
+        return torch.tensor(0, device=s.p.device, dtype=torch.long)
+
+    return torch.arange(
+        0,
+        math.prod(s.p.shape[:-2]),
+        device=s.p.device,
+        dtype=torch.long,
+    )
 
 
 class Room:
@@ -523,9 +552,14 @@ class ConvexRoom(Room):
                     s_list.pop(), force_batch_product=True
                 ):
                     print(
-                        f"Reflection {_}, adding {s.intensity.nelement()} impulse responses..."
+                        f"Reflection {_}, found {s.intensity.nelement()} virtual sources..."
                     )
-                    impulse_response += impulse_response_fn(p, s, dt, n_samples)
+
+                    visible_s = s.can_see(p)
+                    print(
+                        f"Reflection {_}, detected {visible_s.intensity.nelement()} visible sources..."
+                    )
+                    impulse_response += impulse_response_fn(p, visible_s, dt, n_samples)
                     if _ <= k - 1:
                         s_list.appendleft(s)
 
@@ -533,16 +567,13 @@ class ConvexRoom(Room):
             impulse_response,
             cutoff_hz=20.0,
             fs=fs,
-            ir_len=len(impulse_response) // 10,
-            order=4,
+            order=2,
         )
-        return impulse_response.cpu(), torch.arange(
-            len(impulse_response), device="cpu"
-        ) * dt
+        return impulse_response, torch.arange(len(impulse_response)) * dt
 
 
 class Ray:
-    """A ray $R(p_o, d)= \{p_o+dt~:~t\geq0\}$ defined by an origin $p_o\in\mathrm{R}^3$ and a direction $d\in\mathrm{R}^3$.
+    r"""A ray $R(p_o, d)= \{p_o+dt~:~t\geq0\}$ defined by an origin $p_o\in\mathrm{R}^3$ and a direction $d\in\mathrm{R}^3$.
 
 
     Args:
@@ -642,7 +673,7 @@ def _cross_movedim(v1: Tensor, v2: Tensor, moveaxis_arg: Tuple[int, int]):
 
 
 def highpass_filtering(
-    signal: torch.Tensor, cutoff_hz: float, fs: float, order: int = 4, ir_len: int = 512
+    signal: torch.Tensor, cutoff_hz: float, fs: float, order: int = 4
 ) -> torch.Tensor:
     """
     Filters a 1D signal using a Butterworth low-pass filter via convolution with the impulse response.
@@ -660,10 +691,23 @@ def highpass_filtering(
     if signal.ndim != 1:
         raise ValueError("Input signal must be 1D")
 
-    filtered = highpass_biquad(
-        signal,
-        sample_rate=int(fs),
-        cutoff_freq=cutoff_hz,
-        Q=0.99,
+    b, a = scipy.signal.butter(
+        order,
+        cutoff_hz,
+        fs=fs,
+        btype="highpass",
+        analog=False,
+        output="ba",
     )
+    filtered = filtfilt(signal, torch.tensor(a).to(signal), torch.tensor(b).to(signal))
+    filtered = filtfilt(
+        filtered, torch.tensor(a).to(signal), torch.tensor(b).to(signal)
+    )
+    filtered = filtfilt(
+        filtered, torch.tensor(a).to(signal), torch.tensor(b).to(signal)
+    )
+    filtered = filtfilt(
+        filtered, torch.tensor(a).to(signal), torch.tensor(b).to(signal)
+    )
+
     return filtered

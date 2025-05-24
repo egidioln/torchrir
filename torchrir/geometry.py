@@ -261,7 +261,7 @@ class Patch:
         return angle[..., 0] >= (2 * torch.pi - atol)
 
     def mirror(
-        self, s: Source, force_product: bool = False, if_inside: bool = False
+        self, s: Source, force_product: bool = False, if_valid: bool = False
     ) -> Source | Iterable[Source]:
         """Mirror a point p through the plane of self
 
@@ -269,7 +269,7 @@ class Patch:
             s (Source): Source to mirror
             force_product (bool, optional): Forces Cartesian Products between the source and the
                                             mirror batches. Defaults to False.
-            if_inside (bool, optional): Mirror only if inner product between source and plane
+            if_valid (bool, optional): Mirror only if inner product between source and plane
                                         normal is positive. Defaults to False.
 
         Returns:
@@ -277,7 +277,7 @@ class Patch:
         """
         failed = False
         try:
-            yield self._mirror(s, force_product=force_product, if_inside=if_inside)
+            yield self._mirror(s, force_product=force_product, if_valid=if_valid)
         except torch.cuda.OutOfMemoryError:
             failed = True
         # OutOfMemory Fallback, try splitting the tensor for a couple of times
@@ -288,12 +288,12 @@ class Patch:
             # print(torch.cuda.memory_summary())
             for _ in s.chunk(2):
                 yield from self.mirror(
-                    _, force_product=force_product, if_inside=if_inside
+                    _, force_product=force_product, if_valid=if_valid
                 )
             self.__oom_retry_count -= 1
 
     def _mirror(
-        self, s: Source, force_product: bool = False, if_inside: bool = False
+        self, s: Source, force_product: bool = False, if_valid: bool = False
     ) -> Source:
         p = s.p
         intensity = -s.intensity
@@ -305,7 +305,7 @@ class Patch:
         p = p - self.origin
         inner_product_p_normal = dot(p, self.normal_vector, keepdim=True)
 
-        valid = (inner_product_p_normal >= 0)[..., 0, 0] if if_inside else ...
+        valid = (inner_product_p_normal >= 0)[..., 0, 0] if if_valid else ...
         # I tried using masked tensors here but it didn't help
         # p = torch.masked.masked_tensor(p, valid.expand_as(p))
         # inner_product_p_normal = torch.masked.masked_tensor(inner_product_p_normal, valid.expand_as(inner_product_p_normal))
@@ -337,6 +337,30 @@ class Patch:
 
         """
         return NotImplementedError("Method not implemented patches.")
+
+    def plot(
+        self,
+        *args,
+        fig: Optional["matplotlib.pyplot.Figure"] = None,
+        ax: Optional["matplotlib.pyplot.Axes"] = None,
+        **kwargs,
+    ):
+        """Plots the patch as a 3D polygon."""
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+        from mpl_toolkits.mplot3d import Axes3D
+
+        fig = fig or plt.gcf()
+
+        ax = ax or plt.gca()
+        if not isinstance(ax, Axes3D):
+            ax = fig.add_subplot(111, projection="3d")
+        poly = Poly3DCollection([self._vertices.T.cpu().numpy()], **kwargs)
+        ax.add_collection3d(poly)
+        ax.set_xlabel("X")
+        ax.set_ylabel("Y")
+        ax.set_zlabel("Z")
+        return fig, ax
 
 
 class Room:
@@ -465,11 +489,11 @@ class ConvexRoom(Room):
     ) -> Iterable[Source]:
         if not isinstance(s_list, Source):
             return [
-                self.walls.mirror(s, force_product=force_batch_product, if_inside=True)
+                self.walls.mirror(s, force_product=force_batch_product, if_valid=True)
                 for s in s_list
             ]
         for _ in self.walls.mirror(
-            s_list, force_product=force_batch_product, if_inside=True
+            s_list, force_product=force_batch_product, if_valid=True
         ):
             yield _
 

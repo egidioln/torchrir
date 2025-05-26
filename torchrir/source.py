@@ -5,7 +5,7 @@ import torch
 
 
 if TYPE_CHECKING:
-    from torchrir.geometry import Patch
+    from torchrir.geometry import Patch, Ray
 
 
 class Source:
@@ -27,6 +27,12 @@ class Source:
         root_patch_indices: Optional[torch.Tensor] = None,
         root_patch: Optional["Patch"] = None,
     ) -> None:
+        """Initializes a point source.
+
+        Args:
+            position: tensor of shape (..., 3, 1) position of the point source.
+            intensity: tensor of shape (...) defining relative intensity of the sources. Defaults to ones.
+        """
         if position.ndim == 1:
             position = position.unsqueeze(1)
         self.position = position
@@ -104,3 +110,20 @@ class Source:
             root_patch_indices=self.root_patch_indices[idx],
             root_patch=self.root_patch,
         )
+
+    def sample_rays(self) -> "Ray":
+        """Samples rays from the source to its parent patch.
+
+        Returns:
+            An iterable of rays originating from the source position towards the parent patch.
+        """
+        from torchrir.geometry import Ray
+
+        direction = (_r := torch.randn_like(self.position)) / _r.norm(
+            dim=-2, keepdim=True
+        )
+        r = Ray(
+            direction=direction,
+            origin=self.position,
+        )
+        return r

@@ -244,14 +244,22 @@ class Patch:
         Returns:
             bool: true iff p in self
         """
+
+        def broadcast_mask_if_needed(x: Tensor) -> Tensor:
+            if x.ndim > 2:
+                return x[mask]
+            if x.ndim == 2:  # allow
+                return x.broadcast_to((torch.sum(mask).item(), *x.shape))
+            return x
+
         rel_vertices = self._rel_vertices
         origin = self.origin
         if mask is not None:
             if not mask.any():
                 return torch.full_like(mask, False, dtype=torch.bool)
             p = p[mask]
-            rel_vertices = rel_vertices[mask]
-            origin = origin[mask]
+            rel_vertices = broadcast_mask_if_needed(rel_vertices)
+            origin = broadcast_mask_if_needed(origin)
 
         def _circle_pairwise(x: Tensor):
             x = rearrange(x, "... d n -> n ... d 1")

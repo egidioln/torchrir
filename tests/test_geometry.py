@@ -96,13 +96,12 @@ def test_mirror_point_on_patch():
 
 
 def test_mirror_point_on_patch_broadcasting():
-    n_batches_a = 10
-    n_batches_b = 9
-    s = Source(torch.randn(n_batches_a, n_batches_a, 3, 1))
-    patch = Patch(torch.randn(n_batches_b, n_batches_b, 3, 3))
+    n_batches = 3
+    s = Source(torch.randn(n_batches, n_batches, 3, 1))
+    patch = Patch(torch.randn(3, 3))
     p_r = patch._mirror(s, force_product=True)
-    assert p_r.p.shape == (n_batches_a, n_batches_a, n_batches_b, n_batches_b, 3, 1)
-    assert p_r.intensity.shape == (n_batches_a, n_batches_a, n_batches_b, n_batches_b)
+    assert p_r.p.shape == (n_batches, n_batches, 3, 1)
+    assert p_r.intensity.shape == (n_batches, n_batches)
 
     n_batches = 100
     s = Source(torch.randn(n_batches, 3, 1))

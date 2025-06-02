@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 class ImpulseResponseMethod(Protocol):
     r"""A callable that computes the impulse response of a source at a given point. This impulse response
-    is defined as a discrete signal $a_{s~\righrarrow~p}(n)$ where $n$ is the discrete time variable
+    is defined as a discrete signal $a_{s~\rightarrow~p}(n)$ where $n$ is the discrete time variable
     $s$ is the [`Source`](torchrir.source.Source) and $p$ is the listener position.
 
     Args:

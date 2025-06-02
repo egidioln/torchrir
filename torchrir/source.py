@@ -86,7 +86,7 @@ class Source:
             yield Source(p, i)
 
     def can_see(self, p: torch.Tensor) -> "Source":
-        """Checks if source can see a point $p\in\mathbb{R}^3 through it's parent patch$.
+        """Checks if source can see a point $p\in\mathbb{R}^3$ through its parent patch.
 
         Args:
             p: point $p\in\mathbb{R}^3$

@@ -111,7 +111,7 @@ class Source:
             root_patch=self.root_patch,
         )
 
-    def sample_rays(self) -> "Ray":
+    def sample_rays(self, shape: tuple[int, ...]) -> "Ray":
         """Samples rays from the source to its parent patch.
 
         Returns:
@@ -119,9 +119,13 @@ class Source:
         """
         from torchrir.geometry import Ray
 
-        direction = (_r := torch.randn_like(self.position)) / _r.norm(
-            dim=-2, keepdim=True
-        )
+        direction = (
+            _r := torch.randn(
+                shape + self.position.shape,
+                dtype=self.position.dtype,
+                device=self.position.device,
+            )
+        ) / _r.norm(dim=-2, keepdim=True)
         r = Ray(
             direction=direction,
             origin=self.position,

@@ -636,6 +636,52 @@ class Ray:
         undecided[undecided.clone()] *= patch.contains((p, undecided))
         return undecided, p
 
+    def plot(
+        self,
+        *args,
+        fig: Optional["matplotlib.pyplot.Figure"] = None,  # noqa: F821
+        ax: Optional["matplotlib.pyplot.Axes"] = None,  # noqa: F821
+        **kwargs,
+    ) -> Tuple["matplotlib.pyplot.Figure", "matplotlib.pyplot.Axes"]:
+        """Plots the patch as a 3D polygon."""
+        import matplotlib.pyplot as plt
+        from mpl_toolkits.mplot3d import Axes3D
+
+        fig = fig or plt.gcf()
+
+        ax = ax or plt.gca()
+
+        if not isinstance(ax, Axes3D):
+            if isinstance(ax, plt.Axes):
+                fig.delaxes(ax)  # remove the old 2D axes
+            ax = fig.add_subplot(projection="3d")
+
+        # plot rays as 3d lines from self.origin.view(-1, 3) to self.origin.view(-1, 3) + self.direction.view(-1, 3)
+        p_o = (
+            self.origin.view(-1, 3) + self.direction.view(-1, 3) * 0
+        )  # for broadcasting
+        p_f = self.origin.view(-1, 3) + self.direction.view(-1, 3)
+
+        ax.plot(
+            *rearrange(
+                [p_o, p_f],
+                "p ... d -> d ... p",
+            ),
+            *args,
+            **kwargs,
+        )
+
+        return fig, ax
+
+    def __getitem__(self, item: int | slice | torch.Tensor) -> "Ray":
+        """Returns a new Ray with the same properties but with a subset of directions."""
+        direction = self.direction[item, ...]
+        should_slice_origin = (
+            isinstance(self.origin, torch.Tensor) and self.origin.ndim > 2
+        )
+        origin = self.origin[item, ...] if should_slice_origin else self.origin
+        return Ray(direction, origin=origin)
+
 
 def dot(x: Tensor, y: Tensor, keepdim: bool = False) -> Tensor:
     r"""Broadcastable version of [`torch.dot`](torch.dot)

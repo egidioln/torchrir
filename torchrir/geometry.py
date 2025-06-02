@@ -2,7 +2,7 @@
 
 from collections import deque
 import math
-from typing import Any, Iterable, List, Optional, Protocol, Tuple
+from typing import Any, Iterable, List, Optional, Protocol, Tuple, overload
 from warnings import warn
 
 import scipy
@@ -19,13 +19,17 @@ from torchrir.source import Source
 
 
 class ImpulseResponseMethod(Protocol):
-    """A callable that computes the impulse response of a source at a given point.
+    r"""A callable that computes the impulse response of a source at a given point. This impulse response
+    is defined as a discrete signal $a_{s~\righrarrow~p}(n)$ where $n$ is the discrete time variable
+    $s$ is the [`Source`](torchrir.source.Source) and $p$ is the listener position.
 
     Args:
-        p: point at which the impulse response is computed
-        s: Source
-        dt: Sampling time ( 1 / sampling frequency)
-        n_samples: Number of samples in the impulse response
+        p: point at which the impulse response is computed (listener position)
+        s: a [`Source`](torchrir.source.Source) object defining the source (or sorces)
+        dt: Sampling time ( 1 / sampling frequency )
+        n_samples: Number of samples in the impulse response tensor
+        speed_of_sound: Speed of sound in m/s, by default 343.0
+        tw: Time window for the impulse response, by default 200
 
     Returns:
         A tensor with shape (..., n_samples) containing the impulse response.
@@ -37,8 +41,8 @@ class ImpulseResponseMethod(Protocol):
         s: Source,
         dt: float,
         n_samples: int,
-        speed_of_sound: float,
-        tw: int,
+        speed_of_sound: float = 343.0,
+        tw: int = 200,
     ) -> Tensor: ...
 
 
@@ -72,7 +76,7 @@ class ImpulseResponseStrategies:
         Args:
             p (Tensor): point at which the impulse response is computed
             s (Source): Source
-            dt (float): Sampling time ( 1 / sampling frequency)
+            dt (float): Sampling time ( 1 / sampling frequency )
             n_samples (int): Number of samples in the impulse response
 
         Returns:
@@ -246,8 +250,6 @@ class Patch:
             if not mask.any():
                 return torch.full_like(mask, False, dtype=torch.bool)
             p = p[mask]
-            rel_vertices = rel_vertices[mask]
-            origin = origin[mask]
 
         def _circle_pairwise(x: Tensor):
             x = rearrange(x, "... d n -> n ... d 1")
@@ -265,6 +267,7 @@ class Patch:
             angle[at_vertex] = 2 * torch.pi
         return angle[..., 0] >= (2 * torch.pi - atol)
 
+    # @overload
     def mirror(
         self, s: Source, force_product: bool = False, if_valid: bool = False
     ) -> Source | Iterable[Source]:
@@ -360,7 +363,7 @@ class Patch:
         fig: Optional["matplotlib.pyplot.Figure"] = None,  # noqa: F821
         ax: Optional["matplotlib.pyplot.Axes"] = None,  # noqa: F821
         **kwargs,
-    ):
+    ) -> Tuple["matplotlib.pyplot.Figure", "matplotlib.pyplot.Axes"]:
         """Plots the patch as a 3D polygon."""
         import matplotlib.pyplot as plt
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -591,12 +594,16 @@ class Ray:
             raise ValueError(
                 f"Expected shape (..., 3, 1) for direction, got {direction.shape}"
             )
-        if origin.shape != direction.shape:
+        try:
+            torch.broadcast_shapes(origin.shape, direction.shape)
+        except RuntimeError as e:
             raise ValueError(
-                f"direction and origin must have the same shape, got {direction.shape} and {origin.shape}"
-            )
-        if (norm_direction := direction.norm()) == 0:
+                f"origin and shape must have broadcastable shapes, got {direction.shape} and {origin.shape}"
+            ) from e
+
+        if ((norm_direction := direction.norm(dim=-2, keepdim=True)) == 0).any():
             raise ValueError("Null direction: Degenerated ray instantiated")
+
         self.origin = origin
         self.direction = direction / norm_direction
 

@@ -250,6 +250,8 @@ class Patch:
             if not mask.any():
                 return torch.full_like(mask, False, dtype=torch.bool)
             p = p[mask]
+            rel_vertices = rel_vertices[mask]
+            origin = origin[mask]
 
         def _circle_pairwise(x: Tensor):
             x = rearrange(x, "... d n -> n ... d 1")

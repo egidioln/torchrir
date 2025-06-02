@@ -67,3 +67,8 @@ myst_enable_extensions = [
 # html_theme_path = [sphinx_theme.get_html_theme_path("stanford-theme")]
 html_theme = "shibuya"
 html_static_path = ["_static"]
+
+
+html_css_files = [
+    "custom.css",
+]

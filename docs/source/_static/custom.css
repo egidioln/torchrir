@@ -1,0 +1,7 @@
+html.dark {
+    --mystnb-source-bg-color: #23272e;
+    --mystnb-stderr-bg-color: #2c2f33;
+    --mystnb-stdout-bg-color: #2c2f33;
+    --mystnb-traceback-bg-color: #2c2f33;
+    --syntax-pre-bg: #2c2f33;
+}

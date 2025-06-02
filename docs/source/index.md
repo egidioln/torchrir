@@ -5,6 +5,7 @@ A pytorch-based library for simulating Room Impulse Responses (RIRs). It's a wor
 
 ```{toctree}
 :maxdepth: 7
+guides/random_rays.ipynb
 guides/convex_room.ipynb
 guides/validity.ipynb
 apidocs/index

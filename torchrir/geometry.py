@@ -2,7 +2,7 @@
 
 from collections import deque
 import math
-from typing import Any, Iterable, List, Optional, Protocol, Tuple, overload
+from typing import Any, Iterable, List, Optional, Protocol, Tuple, TYPE_CHECKING
 from warnings import warn
 
 import scipy
@@ -16,6 +16,12 @@ import torchist
 from torchaudio.functional import filtfilt
 
 from torchrir.source import Source
+
+if TYPE_CHECKING:
+    try:
+        import matplotlib
+    except ImportError:
+        matplotlib = None
 
 
 class ImpulseResponseMethod(Protocol):
